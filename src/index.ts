@@ -1,75 +1,101 @@
 import { botToken } from './constant.js';
-// import express, { Request, Response } from "express";
-// import axios from "axios";
-// const app = express();
+import { Bot, Context } from 'grammy';
+import fs from 'fs/promises';
+import path from 'path';
 
-// app.use(express.json());
+const CHAT_ID_FILE = path.join(process.cwd(), 'src', 'database', 'chatId.json');
 
-// app.listen(3000, () => {
-//     console.log("Server is running on port 3000");
-// });
+// Interface for our chat storage
+interface ChatInfo {
+  id: number;
+  name: string;
+  type: 'private' | 'group' | 'supergroup' | 'channel';
+}
 
-// app.get("*", (req, res) => {
-//     console.log(req.body);
-//     res.send("Hello World");
-// });
+// Function to load existing chats
+async function loadChats(): Promise<ChatInfo[]> {
+  try {
+    const data = await fs.readFile(CHAT_ID_FILE, 'utf-8');
+    return JSON.parse(data);
+  } catch {
+    return [];
+  }
+}
 
-// app.post("*", (req, res) => {
-//     console.log(req.body);
-//     res.send("Hello World");
-// });
-
-// app.get('/setwebhook', (req, res) => {
-//     res.send(`
-//         <form action="/updatewebhook" method="GET">
-//             <input type="text" name="url" placeholder="Enter webhook URL" style="padding: 5px; width: 300px;">
-//             <button type="submit" style="padding: 5px 10px;">Update Webhook</button>
-//         </form>
-//     `);
-// });
-
-// app.get('/updatewebhook', async (req: Request, res: Response): Promise<void> => {
-//     try {
-//         const webhookUrl = req.query.url;
-//         if (!webhookUrl) {
-//             res.send('Please provide a webhook URL');
-//             return;
-//         }
-
-//         const telegramApi = `https://api.telegram.org/bot${botToken}/setWebhook?url=${webhookUrl}`;
-
-//         const response = await axios.get(telegramApi, {
-//             headers: {
-//                 'Content-Type': 'application/json'
-//             }
-//         });
-//         res.send(`Webhook updated successfully: ${JSON.stringify(response.data)}`);
-//     } catch (error) {
-//         res.send(`Error updating webhook: ${error}`);
-//     }
-// });
-
-import { Bot } from 'grammy';
+// Function to save chats
+async function saveChats(chats: ChatInfo[]) {
+  await fs.writeFile(CHAT_ID_FILE, JSON.stringify(chats, null, 2));
+}
 
 console.log(botToken);
 
-// Create an instance of the `Bot` class and pass your bot token to it.
-const bot = new Bot(botToken); // <-- put your bot token between the ""
+// Create an instance of the `Bot` class
+const bot = new Bot(botToken);
 
-// You can now register listeners on your bot object `bot`.
-// grammY will call the listeners when users send messages to your bot.
+// Create a Map to store user states
+const userAwaitingMessage = new Map();
 
-// Handle the /start command.
+// Handle the /start command
 bot.command('start', async (ctx) => {
-  await ctx.reply('Hi! I can only read messages that explicitly reply to me!', {
-    // Make Telegram clients automatically show a reply interface to the user.
-  });
+  // Store the chat information
+  const chats = await loadChats();
+  const chatInfo: ChatInfo = {
+    id: ctx.chat.id,
+    name: ctx.chat.title || `${ctx.from?.first_name || ''} ${ctx.from?.last_name || ''}`.trim(),
+    type: ctx.chat.type
+  };
+
+  // Check if chat is not already stored
+  if (!chats.some(chat => chat.id === chatInfo.id)) {
+    chats.push(chatInfo);
+    await saveChats(chats);
+  }
+
+  await ctx.reply('Hi! I can only read messages that explicitly reply to me!');
 });
-// Handle other messages.
-bot.on('message', (ctx) => ctx.reply('Got another message!'));
 
-// Now that you specified how to handle messages, you can start your bot.
-// This will connect to the Telegram servers and wait for messages.
+// Handle the /send command
+bot.command('send', async (ctx) => {
+  const userId = ctx.from?.id;
+  if (!userId) return;
+  
+  userAwaitingMessage.set(userId, true);
+  await ctx.reply('Send me the message you want to publish');
+});
 
-// Start the bot.
+// Handle messages globally
+bot.on('message', async (ctx) => {
+  const userId = ctx.from?.id;
+  if (!userId) return;
+
+  // Check if this user is awaiting a message
+  if (userAwaitingMessage.get(userId)) {
+    try {
+      // Get stored chats
+      const chats = await loadChats();
+      
+      // Forward the message to all stored chats
+      for (const chat of chats) {
+        try {
+          await ctx.api.copyMessage(
+            chat.id,
+            ctx.chat.id,
+            ctx.message.message_id
+          );
+        } catch (error) {
+          console.error(`Failed to send to chat ${chat.id}:`, error);
+        }
+      }
+      
+      await ctx.reply('Message has been published to all chats!');
+    } catch (error) {
+      console.error('Error broadcasting message:', error);
+      await ctx.reply('Sorry, there was an error publishing your message.');
+    }
+    
+    userAwaitingMessage.delete(userId);
+  }
+});
+
+
 bot.start();
