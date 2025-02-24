@@ -1,5 +1,5 @@
 import { botToken } from './constant.js';
-import { Bot, Context } from 'grammy';
+import { Bot } from 'grammy';
 import fs from 'fs/promises';
 import path from 'path';
 
@@ -42,11 +42,11 @@ bot.command('start', async (ctx) => {
   const chatInfo: ChatInfo = {
     id: ctx.chat.id,
     name: ctx.chat.title || `${ctx.from?.first_name || ''} ${ctx.from?.last_name || ''}`.trim(),
-    type: ctx.chat.type
+    type: ctx.chat.type,
   };
 
   // Check if chat is not already stored
-  if (!chats.some(chat => chat.id === chatInfo.id)) {
+  if (!chats.some((chat) => chat.id === chatInfo.id)) {
     chats.push(chatInfo);
     await saveChats(chats);
   }
@@ -58,7 +58,7 @@ bot.command('start', async (ctx) => {
 bot.command('send', async (ctx) => {
   const userId = ctx.from?.id;
   if (!userId) return;
-  
+
   userAwaitingMessage.set(userId, true);
   await ctx.reply('Send me the message you want to publish');
 });
@@ -73,29 +73,24 @@ bot.on('message', async (ctx) => {
     try {
       // Get stored chats
       const chats = await loadChats();
-      
+
       // Forward the message to all stored chats
       for (const chat of chats) {
         try {
-          await ctx.api.copyMessage(
-            chat.id,
-            ctx.chat.id,
-            ctx.message.message_id
-          );
+          await ctx.api.copyMessage(chat.id, ctx.chat.id, ctx.message.message_id);
         } catch (error) {
           console.error(`Failed to send to chat ${chat.id}:`, error);
         }
       }
-      
+
       await ctx.reply('Message has been published to all chats!');
     } catch (error) {
       console.error('Error broadcasting message:', error);
       await ctx.reply('Sorry, there was an error publishing your message.');
     }
-    
+
     userAwaitingMessage.delete(userId);
   }
 });
-
 
 bot.start();
