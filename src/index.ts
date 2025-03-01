@@ -6,8 +6,8 @@ import { Chat } from './database/models/Chat.js';
 // Connect to MongoDB
 connectDB();
 
-// Create an instance of the `Bot` class
-const bot = new Bot(botToken);
+// Create an instance of the `Bot` class and export it
+export const bot = new Bot(botToken);
 
 // Create a Map to store user states
 const userAwaitingMessage = new Map();
@@ -74,4 +74,7 @@ bot.on('message', async (ctx) => {
   }
 });
 
-bot.start();
+// Only start the bot in development mode
+if (process.env.NODE_ENV !== 'production') {
+  bot.start();
+}
