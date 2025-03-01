@@ -1,8 +1,5 @@
 import mongoose from 'mongoose';
-import dotenv from 'dotenv';
-import { mongoURI } from '../constant';
-
-dotenv.config();
+import { mongoURI } from '../constant.js';
 
 export async function connectDB() {
   try {
