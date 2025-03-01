@@ -1,33 +1,10 @@
 import { botToken } from './constant.js';
 import { Bot } from 'grammy';
-import fs from 'fs/promises';
-import path from 'path';
+import { connectDB } from './database/config.js';
+import { Chat } from './database/models/Chat.js';
 
-const CHAT_ID_FILE = path.join(process.cwd(), 'src', 'database', 'chatId.json');
-
-// Interface for our chat storage
-interface ChatInfo {
-  id: number;
-  name: string;
-  type: 'private' | 'group' | 'supergroup' | 'channel';
-}
-
-// Function to load existing chats
-async function loadChats(): Promise<ChatInfo[]> {
-  try {
-    const data = await fs.readFile(CHAT_ID_FILE, 'utf-8');
-    return JSON.parse(data);
-  } catch {
-    return [];
-  }
-}
-
-// Function to save chats
-async function saveChats(chats: ChatInfo[]) {
-  await fs.writeFile(CHAT_ID_FILE, JSON.stringify(chats, null, 2));
-}
-
-console.log(botToken);
+// Connect to MongoDB
+connectDB();
 
 // Create an instance of the `Bot` class
 const bot = new Bot(botToken);
@@ -37,21 +14,26 @@ const userAwaitingMessage = new Map();
 
 // Handle the /start command
 bot.command('start', async (ctx) => {
-  // Store the chat information
-  const chats = await loadChats();
-  const chatInfo: ChatInfo = {
-    id: ctx.chat.id,
-    name: ctx.chat.title || `${ctx.from?.first_name || ''} ${ctx.from?.last_name || ''}`.trim(),
-    type: ctx.chat.type,
-  };
+  try {
+    // Store the chat information
+    const chatInfo = {
+      chatId: ctx.chat.id,
+      name: ctx.chat.title || `${ctx.from?.first_name || ''} ${ctx.from?.last_name || ''}`.trim(),
+      type: ctx.chat.type,
+    };
 
-  // Check if chat is not already stored
-  if (!chats.some((chat) => chat.id === chatInfo.id)) {
-    chats.push(chatInfo);
-    await saveChats(chats);
+    // Use findOneAndUpdate to either update existing chat or create new one
+    await Chat.findOneAndUpdate(
+      { chatId: chatInfo.chatId },
+      chatInfo,
+      { upsert: true, new: true }
+    );
+
+    await ctx.reply('Hi! I can only read messages that explicitly reply to me!');
+  } catch (error) {
+    console.error('Error saving chat:', error);
+    await ctx.reply('Sorry, there was an error processing your request.');
   }
-
-  await ctx.reply('Hi! I can only read messages that explicitly reply to me!');
 });
 
 // Handle the /send command
@@ -71,19 +53,22 @@ bot.on('message', async (ctx) => {
   // Check if this user is awaiting a message
   if (userAwaitingMessage.get(userId)) {
     try {
-      // Get stored chats
-      const chats = await loadChats();
+      // Get all chats from MongoDB
+      const chats = await Chat.find();
 
       // Forward the message to all stored chats
       for (const chat of chats) {
         try {
-          await ctx.api.copyMessage(chat.id, ctx.chat.id, ctx.message.message_id);
+          // Skip if this is the sender's chat
+          if (chat.chatId === ctx.chat.id) continue;
+          
+          await ctx.api.copyMessage(chat.chatId, ctx.chat.id, ctx.message.message_id);
         } catch (error) {
-          console.error(`Failed to send to chat ${chat.id}:`, error);
+          console.error(`Failed to send to chat ${chat.chatId}:`, error);
         }
       }
 
-      await ctx.reply('Message has been published to all chats!');
+      await ctx.reply('Message has been published!');
     } catch (error) {
       console.error('Error broadcasting message:', error);
       await ctx.reply('Sorry, there was an error publishing your message.');
