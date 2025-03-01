@@ -23,11 +23,7 @@ bot.command('start', async (ctx) => {
     };
 
     // Use findOneAndUpdate to either update existing chat or create new one
-    await Chat.findOneAndUpdate(
-      { chatId: chatInfo.chatId },
-      chatInfo,
-      { upsert: true, new: true }
-    );
+    await Chat.findOneAndUpdate({ chatId: chatInfo.chatId }, chatInfo, { upsert: true, new: true });
 
     await ctx.reply('Hi! I can only read messages that explicitly reply to me!');
   } catch (error) {
@@ -61,7 +57,7 @@ bot.on('message', async (ctx) => {
         try {
           // Skip if this is the sender's chat
           if (chat.chatId === ctx.chat.id) continue;
-          
+
           await ctx.api.copyMessage(chat.chatId, ctx.chat.id, ctx.message.message_id);
         } catch (error) {
           console.error(`Failed to send to chat ${chat.chatId}:`, error);
