@@ -36,6 +36,12 @@ bot.command('start', async (ctx) => {
 bot.command('send', async (ctx) => {
   const userId = ctx.from?.id;
   if (!userId) return;
+  
+  // Only allow private chats
+  if (ctx.chat.type !== 'private') {
+    // await ctx.reply('This command can only be used in private chats.');
+    return;
+  }
 
   userAwaitingMessage.set(userId, true);
   await ctx.reply('Send me the message you want to publish');
