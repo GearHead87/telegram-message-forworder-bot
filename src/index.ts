@@ -6,8 +6,8 @@ import { Chat } from './database/models/Chat.js';
 // Connect to MongoDB
 connectDB();
 
-// Create an instance of the `Bot` class
-const bot = new Bot(botToken);
+// Create an instance of the `Bot` class and export it
+export const bot = new Bot(botToken);
 
 // Create a Map to store user states
 const userAwaitingMessage = new Map();
@@ -36,6 +36,12 @@ bot.command('start', async (ctx) => {
 bot.command('send', async (ctx) => {
   const userId = ctx.from?.id;
   if (!userId) return;
+  
+  // Only allow private chats
+  if (ctx.chat.type !== 'private') {
+    // await ctx.reply('This command can only be used in private chats.');
+    return;
+  }
 
   userAwaitingMessage.set(userId, true);
   await ctx.reply('Send me the message you want to publish');
@@ -74,4 +80,7 @@ bot.on('message', async (ctx) => {
   }
 });
 
-bot.start();
+// Only start the bot in development mode
+if (process.env.NODE_ENV !== 'production') {
+  bot.start();
+}

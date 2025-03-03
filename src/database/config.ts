@@ -1,13 +1,10 @@
 import mongoose from 'mongoose';
-import dotenv from 'dotenv';
-import { mongoURI } from '../constant';
-
-dotenv.config();
+import { mongoURI, databaseName } from '../constant.js';
 
 export async function connectDB() {
   try {
     await mongoose.connect(mongoURI, {
-      dbName: 'TelegramBot',
+      dbName: databaseName,
     });
     console.log('Connected to MongoDB - TelegramBot Database');
   } catch (error) {
