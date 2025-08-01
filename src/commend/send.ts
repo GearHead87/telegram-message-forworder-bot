@@ -10,6 +10,12 @@ interface UserState {
   progressMessageId?: number;
 }
 
+// Interface for failed users with retry tracking
+interface FailedUser {
+  userId: string;
+  triedCount: number;
+}
+
 // Map to store user states (supports multiple concurrent users)
 const userStates = new Map<number, UserState>();
 
@@ -110,7 +116,7 @@ async function handleCallbackQuery(ctx: Context, userId: number, userState: User
   }
 }
 
-// Start the forwarding process with progress tracking
+// Start the forwarding process with progress tracking and retry mechanism
 async function startForwardingProcess(ctx: Context, userId: number, userState: UserState) {
   if (!userState.messageId || !userState.chatId) return;
 
@@ -131,65 +137,89 @@ async function startForwardingProcess(ctx: Context, userId: number, userState: U
     );
     userState.progressMessageId = progressMessage.message_id;
 
-    let successCount = 0;
-    let failureCount = 0;
+    let totalSuccessCount = 0;
+    let totalFailureCount = 0;
     const batchSize = 30; // Process in batches to avoid rate limits
     const delayBetweenBatches = 1000; // 1 second delay between batches
+    const maxRetries = 3;
 
-    // Process users in batches
-    for (let i = 0; i < users.length; i += batchSize) {
-      const batch = users.slice(i, i + batchSize);
+    // Array to track failed users with retry counts
+    let failedUsers: FailedUser[] = [];
 
-      // Process batch concurrently
-      const batchPromises = batch.map(async (user) => {
-        try {
-          await ctx.api.copyMessage(user.userId, userState.chatId!, userState.messageId!);
-          return { success: true };
-        } catch (error) {
-          console.error(`Failed to send to user ${user.userId}:`, error);
-          return { success: false };
-        }
-      });
+    // Initial send attempt
+    const { successCount, failureCount, failedUserIds } = await sendToUsers(
+      ctx, users, userState, batchSize, delayBetweenBatches, totalUsers, 0, 0, 'Initial'
+    );
 
-      // Wait for batch to complete
-      const batchResults = await Promise.all(batchPromises);
+    totalSuccessCount = successCount;
+    totalFailureCount = failureCount;
 
-      // Count successes and failures
-      batchResults.forEach((result) => {
-        if (result.success) {
-          successCount++;
-        } else {
-          failureCount++;
-        }
-      });
+    // Add failed users to retry array
+    failedUsers = failedUserIds.map(userId => ({ userId, triedCount: 1 }));
 
-      const processedCount = successCount + failureCount;
-      const progressPercentage = Math.round((processedCount / totalUsers) * 100);
+    // Retry failed users up to 3 times
+    for (let retryAttempt = 1; retryAttempt <= maxRetries && failedUsers.length > 0; retryAttempt++) {
+      await new Promise(resolve => setTimeout(resolve, 2000)); // 2 second delay before retry
 
-      // Update progress every 5% or at the end of each batch
-      if (progressPercentage % 5 === 0 || processedCount === totalUsers || i + batchSize >= users.length) {
-        try {
-          await ctx.api.editMessageText(
-            ctx.chat!.id,
-            userState.progressMessageId!,
-            `🚀 Sending message to users...\n📊 Progress: ${processedCount}/${totalUsers} (${progressPercentage}%)\n✅ Successful: ${successCount}\n❌ Failed: ${failureCount}`,
-          );
-        } catch (editError) {
-          // Ignore edit errors (message might be too old)
-          console.error('Error updating progress message:', editError);
-        }
+      // Get users to retry
+      const usersToRetry = users.filter(user => 
+        failedUsers.some(failed => failed.userId === user.userId)
+      );
+
+      if (usersToRetry.length === 0) break;
+
+      // Update progress message for retry
+      try {
+        await ctx.api.editMessageText(
+          ctx.chat!.id,
+          userState.progressMessageId!,
+          `🔄 Retry attempt ${retryAttempt}/${maxRetries} for ${usersToRetry.length} failed users...\n📊 Current: ${totalSuccessCount} successful, ${totalFailureCount} failed`,
+        );
+      } catch (editError) {
+        console.error('Error updating progress message:', editError);
       }
 
-      // Add delay between batches to respect rate limits
-      if (i + batchSize < users.length) {
-        await new Promise((resolve) => setTimeout(resolve, delayBetweenBatches));
-      }
+      // Retry sending to failed users
+      const retryResult = await sendToUsers(
+        ctx, usersToRetry, userState, batchSize, delayBetweenBatches, 
+        totalUsers, totalSuccessCount, totalFailureCount, `Retry ${retryAttempt}`
+      );
+
+      // Update counters
+      const newSuccesses = retryResult.successCount - totalSuccessCount;
+      const newFailures = retryResult.failureCount - totalFailureCount;
+      totalSuccessCount = retryResult.successCount;
+      totalFailureCount = retryResult.failureCount;
+
+      // Update failed users array
+      const stillFailedUsers: FailedUser[] = [];
+      
+      failedUsers.forEach(failedUser => {
+        if (retryResult.failedUserIds.includes(failedUser.userId)) {
+          // Still failed, increment try count
+          stillFailedUsers.push({
+            userId: failedUser.userId,
+            triedCount: failedUser.triedCount + 1
+          });
+        }
+        // If not in failedUserIds, it means this user succeeded in retry
+      });
+
+      failedUsers = stillFailedUsers;
+
+      // Log retry results
+      console.log(`Retry ${retryAttempt} completed: ${newSuccesses} new successes, ${newFailures} still failed`);
     }
 
-    // Send completion message
+    // Clear the failed users array after all retries
+    failedUsers = [];
+
+    // Send final completion message
+    const finalSuccessRate = Math.round((totalSuccessCount / totalUsers) * 100);
     await ctx.reply(
-      `✅ Message forwarding completed!\n\n📊 Final Results:\n👥 Total Users: ${totalUsers}\n✅ Successfully Sent: ${successCount}\n❌ Failed: ${failureCount}\n📈 Success Rate: ${Math.round((successCount / totalUsers) * 100)}%`,
+      `✅ Message forwarding completed with retries!\n\n📊 Final Results:\n👥 Total Users: ${totalUsers}\n✅ Successfully Sent: ${totalSuccessCount}\n❌ Failed (after ${maxRetries} retries): ${totalFailureCount}\n📈 Success Rate: ${finalSuccessRate}%\n\n🔄 Retry Summary:\n• Failed users were retried up to ${maxRetries} times\n• All retry attempts completed`
     );
+
   } catch (error) {
     console.error('Error in forwarding process:', error);
     await ctx.reply('❌ Sorry, there was an error during the forwarding process.');
@@ -197,4 +227,74 @@ async function startForwardingProcess(ctx: Context, userId: number, userState: U
     // Clean up user state
     userStates.delete(userId);
   }
+}
+
+// Helper function to send messages to users
+async function sendToUsers(
+  ctx: Context, 
+  users: { userId: string }[], 
+  userState: UserState, 
+  batchSize: number, 
+  delayBetweenBatches: number,
+  totalUsers: number,
+  currentSuccessCount: number,
+  currentFailureCount: number,
+  attemptType: string
+): Promise<{ successCount: number; failureCount: number; failedUserIds: string[] }> {
+  let successCount = currentSuccessCount;
+  let failureCount = currentFailureCount;
+  const failedUserIds: string[] = [];
+
+  // Process users in batches
+  for (let i = 0; i < users.length; i += batchSize) {
+    const batch = users.slice(i, i + batchSize);
+
+    // Process batch concurrently
+    const batchPromises = batch.map(async (user) => {
+      try {
+        await ctx.api.copyMessage(user.userId, userState.chatId!, userState.messageId!);
+        return { success: true, userId: user.userId };
+      } catch (error) {
+        console.error(`Failed to send to user ${user.userId} (${attemptType}):`, error);
+        return { success: false, userId: user.userId };
+      }
+    });
+
+    // Wait for batch to complete
+    const batchResults = await Promise.all(batchPromises);
+
+    // Count successes and failures
+    batchResults.forEach((result) => {
+      if (result.success) {
+        successCount++;
+      } else {
+        failureCount++;
+        failedUserIds.push(result.userId);
+      }
+    });
+
+    const processedCount = successCount + failureCount;
+    const progressPercentage = Math.round((processedCount / totalUsers) * 100);
+
+    // Update progress every 5% or at the end of each batch
+    if (progressPercentage % 5 === 0 || processedCount === totalUsers || i + batchSize >= users.length) {
+      try {
+        await ctx.api.editMessageText(
+          ctx.chat!.id,
+          userState.progressMessageId!,
+          `🚀 ${attemptType} sending...\n📊 Progress: ${processedCount}/${totalUsers} (${progressPercentage}%)\n✅ Successful: ${successCount}\n❌ Failed: ${failureCount}`,
+        );
+      } catch (editError) {
+        // Ignore edit errors (message might be too old)
+        console.error('Error updating progress message:', editError);
+      }
+    }
+
+    // Add delay between batches to respect rate limits
+    if (i + batchSize < users.length) {
+      await new Promise((resolve) => setTimeout(resolve, delayBetweenBatches));
+    }
+  }
+
+  return { successCount, failureCount, failedUserIds };
 }
