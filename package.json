@@ -6,10 +6,12 @@
 	"scripts": {
 		"test": "echo \"Error: no test specified\" && exit 1",
 		"build": "tsc",
-		"dev": "NODE_ENV=development tsx watch src/index.ts",
+		"dev": "NODE_ENV=development tsx watch src/index_long_polling.ts",
+		"dev:webhook": "NODE_ENV=development tsx watch src/index_webhook_express.ts",
 		"lint": "eslint src/**/*.ts",
 		"format": "eslint src/**/*.ts --fix",
-		"start": "node build/src/index.js"
+		"start": "node build/src/index_long_polling.js",
+		"start:webhook": "node build/src/index_webhook_express.js"
 	},
 	"keywords": [],
 	"author": "",

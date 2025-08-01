@@ -36,7 +36,6 @@ export async function handleSendCommand(ctx: Context) {
 
 // Handle message flow and callback queries
 export async function handleSendFlow(ctx: Context) {
-  console.log(ctx.from);
   const userId = ctx.from?.id;
   if (!userId) return;
 

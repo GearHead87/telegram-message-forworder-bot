@@ -17,8 +17,3 @@ bot.on('message', handleSendFlow);
 
 // Handle callback queries (for inline keyboard buttons)
 bot.on('callback_query', handleSendFlow);
-
-// Only start the bot in development mode
-if (process.env.NODE_ENV !== 'production') {
-  bot.start();
-}
