@@ -12,7 +12,7 @@ if (!mongoURI) {
   throw new Error('MONGODB_URI is not set');
 }
 
-if (!databaseName) {  
+if (!databaseName) {
   throw new Error('DATABASE_NAME is not set');
 }
 
