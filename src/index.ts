@@ -1,4 +1,4 @@
-import { botToken } from './constant.js';
+import { env } from './env.js';
 import { Bot } from 'grammy';
 import { connectDB } from './database/config.js';
 import { handleSendCommand, handleSendFlow } from './commend/send.js';
@@ -7,7 +7,7 @@ import { handleSendCommand, handleSendFlow } from './commend/send.js';
 connectDB();
 
 // Create an instance of the `Bot` class and export it
-export const bot = new Bot(botToken);
+export const bot = new Bot(env.TELEGRAM_BOT_TOKEN);
 
 // Handle the /send command
 bot.command('send', handleSendCommand);

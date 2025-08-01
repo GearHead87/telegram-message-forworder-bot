@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { env } from '../../env.js';
 
 // Define the user schema
 const userSchema = new mongoose.Schema(
@@ -11,7 +12,7 @@ const userSchema = new mongoose.Schema(
   },
   {
     // Specify the collection name explicitly
-    collection: 'testUserList',
+    collection: env.USER_COLLECTION_NAME,
   },
 );
 

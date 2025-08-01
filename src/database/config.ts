@@ -1,10 +1,10 @@
 import mongoose from 'mongoose';
-import { mongoURI, databaseName } from '../constant.js';
+import { env } from '../env.js';
 
 export async function connectDB() {
   try {
-    await mongoose.connect(mongoURI, {
-      dbName: databaseName,
+    await mongoose.connect(env.MONGODB_URI, {
+      dbName: env.DATABASE_NAME,
     });
     console.log('Connected to MongoDB - TelegramBot Database');
   } catch (error) {
