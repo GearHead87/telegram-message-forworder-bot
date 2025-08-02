@@ -2,6 +2,7 @@ import { env } from './env.js';
 import { Bot } from 'grammy';
 import { connectDB } from './database/config.js';
 import { handleSendCommand, handleSendFlow } from './commend/send.js';
+import { handleStartCommand, handleHelpCommand } from './commend/basic.js';
 
 // Production-ready bot initialization with error handling
 let bot: Bot;
@@ -56,56 +57,11 @@ try {
     }
   });
 
-  // Handle the /start command with production-ready response
-  bot.command('start', async (ctx) => {
-    try {
-      const welcomeMessage = `🤖 Welcome to the Telegram Marketing Bot!
-
-📝 Available Commands:
-• /send - Send a message to all users
-• /help - Show this help message
-
-🔒 This bot helps you broadcast messages to all registered users safely and efficiently.`;
-
-      await ctx.reply(welcomeMessage);
-      
-      console.log(`✅ New user started bot: ${ctx.from?.id} (${ctx.from?.first_name})`);
-    } catch (error) {
-      console.error('Error in start command:', error);
-      await ctx.reply('❌ Sorry, something went wrong. Please try again later.');
-    }
-  });
+  // Handle the /start command
+  bot.command('start', handleStartCommand);
 
   // Handle the /help command
-  bot.command('help', async (ctx) => {
-    try {
-      const helpMessage = `🆘 Help - Telegram Marketing Bot
-
-📋 Available Commands:
-• /start - Start the bot and see welcome message
-• /send - Send a message to all registered users
-• /help - Show this help message
-
-📝 How to use /send:
-1. Type /send
-2. Send the message you want to broadcast
-3. Confirm your message
-4. The bot will send it to all users
-
-⚠️ Important Notes:
-• Only private chats are supported for sending messages
-• Messages are sent in batches to respect rate limits
-• Failed deliveries are automatically retried
-• You'll receive a detailed report after sending
-
-🔧 For technical support, contact the administrator.`;
-
-      await ctx.reply(helpMessage);
-    } catch (error) {
-      console.error('Error in help command:', error);
-      await ctx.reply('❌ Sorry, something went wrong. Please try again later.');
-    }
-  });
+  bot.command('help', handleHelpCommand);
 
   // Handle the /send command
   bot.command('send', handleSendCommand);
