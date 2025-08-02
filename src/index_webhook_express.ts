@@ -1,6 +1,6 @@
 import express from 'express';
 import { webhookCallback } from 'grammy';
-import { bot } from './index.js';
+import { bot, initializeBot } from './index.js';
 
 // Create Express app
 const app = express();
@@ -65,13 +65,25 @@ app.get('/webhook-info', async (req, res) => {
   }
 });
 
-// Start the server
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🚀 Express server running on port ${PORT}`);
-  console.log(`📡 Webhook endpoint: http://localhost:${PORT}/webhook`);
-  console.log(`🏥 Health check: http://localhost:${PORT}/health`);
-  console.log(`⚙️  Set webhook: POST http://localhost:${PORT}/set-webhook`);
-});
+// Initialize bot before starting server
+async function startServer() {
+  try {
+    await initializeBot();
+    
+    // Start the server
+    const PORT = process.env.PORT || 3000;
+    app.listen(PORT, () => {
+      console.log(`🚀 Express server running on port ${PORT}`);
+      console.log(`📡 Webhook endpoint: http://localhost:${PORT}/webhook`);
+      console.log(`🏥 Health check: http://localhost:${PORT}/health`);
+      console.log(`⚙️  Set webhook: POST http://localhost:${PORT}/set-webhook`);
+    });
+  } catch (error) {
+    console.error('💥 Failed to start server:', error);
+    process.exit(1);
+  }
+}
+
+startServer();
 
 export { app, bot }; 
