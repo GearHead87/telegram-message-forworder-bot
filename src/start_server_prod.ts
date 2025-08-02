@@ -2,8 +2,7 @@ import cluster from 'cluster';
 import os from 'os';
 import express from 'express';
 import { webhookCallback } from 'grammy';
-import { bot } from './index.js';
-import { connectDB } from './database/config.js';
+import { bot, initializeBot } from './index.js';
 import type { Request, Response, NextFunction } from 'express';
 
 // Production-ready server with clustering
@@ -272,12 +271,12 @@ if (cluster.isPrimary) {
     });
   });
 
-  // Initialize database connection
+  // Initialize bot and database connection
   const initializeApp = async () => {
     try {
-      console.log(`🔌 Worker ${process.pid}: Connecting to database...`);
-      await connectDB();
-      console.log(`✅ Worker ${process.pid}: Database connected`);
+      console.log(`🤖 Worker ${process.pid}: Initializing bot...`);
+      await initializeBot();
+      console.log(`✅ Worker ${process.pid}: Bot initialized successfully`);
 
       // Start the server
       const server = app.listen(PORT, () => {

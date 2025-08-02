@@ -3,6 +3,13 @@ import { Bot } from 'grammy';
 import { connectDB } from './database/config.js';
 import { handleSendCommand, handleSendFlow } from './commend/send.js';
 import { handleStartCommand, handleHelpCommand } from './commend/basic.js';
+import { requireAdmin } from './middleware/adminAuth.js';
+import { 
+  handleAddAdminCommand, 
+  handleRemoveAdminCommand, 
+  handleListAdminsCommand, 
+  handleAdminHelpCommand 
+} from './commend/admin.js';
 
 // Production-ready bot initialization with error handling
 let bot: Bot;
@@ -63,8 +70,14 @@ try {
   // Handle the /help command
   bot.command('help', handleHelpCommand);
 
-  // Handle the /send command
-  bot.command('send', handleSendCommand);
+  // Handle the /send command (admin only)
+  bot.command('send', requireAdmin, handleSendCommand);
+
+  // Handle admin management commands (admin only)
+  bot.command('addadmin', requireAdmin, handleAddAdminCommand);
+  bot.command('removeadmin', requireAdmin, handleRemoveAdminCommand);
+  bot.command('listadmins', requireAdmin, handleListAdminsCommand);
+  bot.command('adminhelp', requireAdmin, handleAdminHelpCommand);
 
   // Handle all other messages (for send flow)
   bot.on('message', handleSendFlow);
@@ -104,8 +117,12 @@ async function initializeBot(): Promise<void> {
     // Set bot commands for better UX
     await bot.api.setMyCommands([
       { command: 'start', description: 'Start the bot' },
-      { command: 'send', description: 'Send message to all users' },
       { command: 'help', description: 'Show help information' },
+      { command: 'send', description: '[Admin] Send message to all users' },
+      { command: 'addadmin', description: '[Admin] Add a new admin' },
+      { command: 'removeadmin', description: '[Admin] Remove admin access' },
+      { command: 'listadmins', description: '[Admin] List all admins' },
+      { command: 'adminhelp', description: '[Admin] Show admin help' },
     ]);
 
     console.log('✅ Bot commands set successfully');
