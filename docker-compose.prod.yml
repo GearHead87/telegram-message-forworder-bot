@@ -1,0 +1,107 @@
+version: '3.8'
+
+services:
+  # Telegram Bot Application
+  telegram-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: telegram-marketing-bot
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - SERVER_URL=${SERVER_URL}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - MONGODB_URI=mongodb://mongodb:27017
+      - DATABASE_NAME=${DATABASE_NAME}
+      - USER_COLLECTION_NAME=${USER_COLLECTION_NAME}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    ports:
+      - "${PORT:-3000}:3000"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - bot-network
+    volumes:
+      - ./logs:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1.0'
+        reservations:
+          memory: 256M
+          cpus: '0.5'
+
+  # MongoDB Database
+  mongodb:
+    image: mongo:7-jammy
+    container_name: telegram-bot-mongodb
+    restart: unless-stopped
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=${MONGO_ROOT_USERNAME:-admin}
+      - MONGO_INITDB_ROOT_PASSWORD=${MONGO_ROOT_PASSWORD}
+      - MONGO_INITDB_DATABASE=${DATABASE_NAME}
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+      - mongodb_config:/data/configdb
+      - ./mongodb-init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - bot-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+
+  # Nginx Reverse Proxy (optional, for HTTPS)
+  nginx:
+    image: nginx:alpine
+    container_name: telegram-bot-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - ./logs/nginx:/var/log/nginx
+    depends_on:
+      - telegram-bot
+    networks:
+      - bot-network
+    profiles:
+      - with-nginx
+
+networks:
+  bot-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  mongodb_data:
+    driver: local
+  mongodb_config:
+    driver: local 

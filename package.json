@@ -6,12 +6,19 @@
 	"scripts": {
 		"test": "echo \"Error: no test specified\" && exit 1",
 		"build": "tsc",
+		"build:prod": "NODE_ENV=production tsc",
 		"dev": "NODE_ENV=development tsx watch src/index_long_polling.ts",
 		"dev:webhook": "NODE_ENV=development tsx watch src/index_webhook_express.ts",
 		"lint": "eslint src/**/*.ts",
 		"format": "eslint src/**/*.ts --fix",
 		"start": "node build/src/index_long_polling.js",
-		"start:webhook": "node build/src/index_webhook_express.js"
+		"start:webhook": "node build/src/index_webhook_express.js",
+		"start:prod": "NODE_ENV=production node build/src/start_server_prod.js",
+		"docker:build": "docker build -t telegram-marketing-bot .",
+		"docker:run": "docker run -p 3000:3000 --env-file .env.production telegram-marketing-bot",
+		"docker:prod": "docker-compose -f docker-compose.prod.yml --env-file .env.production up -d",
+		"docker:logs": "docker-compose -f docker-compose.prod.yml logs -f telegram-bot",
+		"docker:stop": "docker-compose -f docker-compose.prod.yml down"
 	},
 	"keywords": [],
 	"author": "",
