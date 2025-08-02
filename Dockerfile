@@ -50,6 +50,12 @@ COPY --from=builder --chown=botuser:nodejs /app/package.json ./package.json
 # Create logs directory
 RUN mkdir -p /app/logs && chown botuser:nodejs /app/logs
 
+# Create Let's Encrypt directory and acme.json file for HTTPS certificates
+RUN rm -rf /letsencrypt && \
+    mkdir /letsencrypt && \
+    touch /letsencrypt/acme.json && \
+    chmod 600 /letsencrypt/acme.json
+
 # Set environment variables
 ENV NODE_ENV=production
 ENV PORT=3000
