@@ -77,24 +77,22 @@ jest.config.js
 # ==========================================
 .eslintrc*
 .eslintignore
-.prettierrc*
 .prettierignore
-eslint.config.mjs
+# Keep .prettierrc* and eslint.config.mjs for build process
 
 # ==========================================
 # TypeScript
 # ==========================================
 *.tsbuildinfo
-tsconfig.json
-tsconfig.*.json
+# Keep tsconfig.json and tsconfig.*.json for build process
 
 # ==========================================
 # Docker & Deployment
 # ==========================================
-Dockerfile*
 docker-compose*.yml
 .dockerignore
 ecosystem.config.js
+# Keep Dockerfile* for multi-stage builds that might reference it
 
 # ==========================================
 # CI/CD & Cloud
@@ -176,5 +174,10 @@ coverage/
 # ==========================================
 # These files are needed in the Docker image:
 # - package.json (dependencies)
+# - yarn.lock (exact dependency versions)
 # - src/ (source code)
+# - api/ (API code)
+# - tsconfig.json (TypeScript compilation)
+# - eslint.config.mjs (linting during build)
+# - .prettierrc (code formatting)
 # - Any production config files you specifically need 
