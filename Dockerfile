@@ -10,7 +10,7 @@ WORKDIR /app
 RUN apk add --no-cache python3 make g++
 
 # Copy package files
-COPY package*.json yarn.lock ./
+COPY package.json yarn.lock ./
 
 # Install dependencies with yarn for better performance
 RUN yarn install --frozen-lockfile --production=false
