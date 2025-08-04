@@ -10,6 +10,14 @@ import {
   handleListAdminsCommand, 
   handleAdminHelpCommand 
 } from './commend/admin.js';
+import {
+  handleGramjsSetupCommand,
+  handleGramjsSetupFlow,
+  handleGramjsAuthenticateCommand,
+  handleGramjsTestCommand,
+  handleGramjsStatusCommand,
+  handleGramjsResetCommand
+} from './commend/gramjs.js';
 
 // Production-ready bot initialization with error handling
 let bot: Bot;
@@ -79,8 +87,22 @@ try {
   bot.command('listadmins', requireAdmin, handleListAdminsCommand);
   bot.command('adminhelp', requireAdmin, handleAdminHelpCommand);
 
-  // Handle all other messages (for send flow)
-  bot.on('message', handleSendFlow);
+  // Handle gramjs commands (admin only)
+  bot.command('gramjs_setup', requireAdmin, handleGramjsSetupCommand);
+  bot.command('gramjs_authenticate', requireAdmin, handleGramjsAuthenticateCommand);
+  bot.command('gramjs_test', requireAdmin, handleGramjsTestCommand);
+  bot.command('gramjs_status', requireAdmin, handleGramjsStatusCommand);
+  bot.command('gramjs_reset', requireAdmin, handleGramjsResetCommand);
+
+  // Handle all other messages (for send flow and gramjs setup flow)
+  bot.on('message', async (ctx, next) => {
+    // First try gramjs setup flow
+    await handleGramjsSetupFlow(ctx);
+    // Then try send flow
+    await handleSendFlow(ctx);
+    // Continue to next handler if needed
+    await next();
+  });
 
   // Handle callback queries (for inline keyboard buttons)
   bot.on('callback_query', handleSendFlow);

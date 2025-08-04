@@ -1,5 +1,7 @@
 import { Context, InlineKeyboard } from 'grammy';
 import { User } from '../database/models/User.js';
+import { AdminUser } from '../database/models/AdminUser.js';
+import { copyMessageViaGramjs } from '../utils/gramjsClient.js';
 
 // Types for user states
 interface UserState {
@@ -131,9 +133,20 @@ async function startForwardingProcess(ctx: Context, userId: number, userState: U
       return;
     }
 
+    // Check if admin has gramjs configured
+    const adminUser = await AdminUser.findOne({ 
+      userId: userId.toString(), 
+      isActive: true,
+      gramjsActive: true,
+      gramjsSession: { $exists: true, $ne: null }
+    });
+
+    const useGramjs = !!adminUser;
+    const sendMethod = useGramjs ? '🔗 GramJS (Personal Account)' : '🤖 Bot API';
+
     // Send initial progress message
     const progressMessage = await ctx.reply(
-      `🚀 Starting to send message to ${totalUsers} users...\n📊 Progress: 0/${totalUsers} (0%)`,
+      `🚀 Starting to send message to ${totalUsers} users...\n📊 Progress: 0/${totalUsers} (0%)\n📡 Method: ${sendMethod}`,
     );
     userState.progressMessageId = progressMessage.message_id;
 
@@ -148,7 +161,7 @@ async function startForwardingProcess(ctx: Context, userId: number, userState: U
 
     // Initial send attempt
     const { successCount, failureCount, failedUserIds } = await sendToUsers(
-      ctx, users, userState, batchSize, delayBetweenBatches, totalUsers, 0, 0, 'Initial'
+      ctx, users, userState, batchSize, delayBetweenBatches, totalUsers, 0, 0, 'Initial', useGramjs, userId.toString()
     );
 
     totalSuccessCount = successCount;
@@ -182,7 +195,7 @@ async function startForwardingProcess(ctx: Context, userId: number, userState: U
       // Retry sending to failed users
       const retryResult = await sendToUsers(
         ctx, usersToRetry, userState, batchSize, delayBetweenBatches, 
-        totalUsers, totalSuccessCount, totalFailureCount, `Retry ${retryAttempt}`
+        totalUsers, totalSuccessCount, totalFailureCount, `Retry ${retryAttempt}`, useGramjs, userId.toString()
       );
 
       // Update counters
@@ -217,7 +230,7 @@ async function startForwardingProcess(ctx: Context, userId: number, userState: U
     // Send final completion message
     const finalSuccessRate = Math.round((totalSuccessCount / totalUsers) * 100);
     await ctx.reply(
-      `✅ Message forwarding completed with retries!\n\n📊 Final Results:\n👥 Total Users: ${totalUsers}\n✅ Successfully Sent: ${totalSuccessCount}\n❌ Failed (after ${maxRetries} retries): ${totalFailureCount}\n📈 Success Rate: ${finalSuccessRate}%\n\n🔄 Retry Summary:\n• Failed users were retried up to ${maxRetries} times\n• All retry attempts completed`
+      `✅ Message forwarding completed with retries!\n\n📊 Final Results:\n👥 Total Users: ${totalUsers}\n✅ Successfully Sent: ${totalSuccessCount}\n❌ Failed (after ${maxRetries} retries): ${totalFailureCount}\n📈 Success Rate: ${finalSuccessRate}%\n📡 Method Used: ${sendMethod}\n\n🔄 Retry Summary:\n• Failed users were retried up to ${maxRetries} times\n• All retry attempts completed`
     );
 
   } catch (error) {
@@ -239,7 +252,9 @@ async function sendToUsers(
   totalUsers: number,
   currentSuccessCount: number,
   currentFailureCount: number,
-  attemptType: string
+  attemptType: string,
+  useGramjs: boolean = false,
+  adminUserId?: string
 ): Promise<{ successCount: number; failureCount: number; failedUserIds: string[] }> {
   let successCount = currentSuccessCount;
   let failureCount = currentFailureCount;
@@ -252,8 +267,28 @@ async function sendToUsers(
     // Process batch concurrently
     const batchPromises = batch.map(async (user) => {
       try {
-        await ctx.api.copyMessage(user.userId, userState.chatId!, userState.messageId!);
-        return { success: true, userId: user.userId };
+        if (useGramjs && adminUserId) {
+          // Try to send via gramjs first
+          const gramjsSuccess = await copyMessageViaGramjs(
+            adminUserId,
+            user.userId,
+            userState.chatId!.toString(),
+            userState.messageId!
+          );
+          
+          if (gramjsSuccess) {
+            return { success: true, userId: user.userId };
+          } else {
+            // Fallback to bot API if gramjs fails
+            console.log(`GramJS failed for user ${user.userId}, falling back to bot API`);
+            await ctx.api.copyMessage(user.userId, userState.chatId!, userState.messageId!);
+            return { success: true, userId: user.userId };
+          }
+        } else {
+          // Use bot API
+          await ctx.api.copyMessage(user.userId, userState.chatId!, userState.messageId!);
+          return { success: true, userId: user.userId };
+        }
       } catch (error) {
         console.error(`Failed to send to user ${user.userId} (${attemptType}):`, error);
         return { success: false, userId: user.userId };
@@ -279,10 +314,11 @@ async function sendToUsers(
     // Update progress every 5% or at the end of each batch
     if (progressPercentage % 5 === 0 || processedCount === totalUsers || i + batchSize >= users.length) {
       try {
+        const methodText = useGramjs ? '🔗 GramJS' : '🤖 Bot API';
         await ctx.api.editMessageText(
           ctx.chat!.id,
           userState.progressMessageId!,
-          `🚀 ${attemptType} sending...\n📊 Progress: ${processedCount}/${totalUsers} (${progressPercentage}%)\n✅ Successful: ${successCount}\n❌ Failed: ${failureCount}`,
+          `🚀 ${attemptType} sending...\n📊 Progress: ${processedCount}/${totalUsers} (${progressPercentage}%)\n✅ Successful: ${successCount}\n❌ Failed: ${failureCount}\n📡 Method: ${methodText}`,
         );
       } catch (editError) {
         // Ignore edit errors (message might be too old)
