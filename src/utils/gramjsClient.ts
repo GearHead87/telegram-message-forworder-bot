@@ -92,7 +92,7 @@ function isCacheValid(cachedFile: CachedFile): boolean {
 }
 
 // Helper function to download file from Telegram using file_id (via Bot API) with caching
-async function downloadFileFromTelegram(fileId: string, botToken: string, mimeType?: string, fileName?: string): Promise<Buffer | null> {
+export async function downloadFileFromTelegram(fileId: string, botToken: string, mimeType?: string, fileName?: string): Promise<Buffer | null> {
   try {
     // Check if file is already cached and valid
     const cachedFile = fileCache.get(fileId);
