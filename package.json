@@ -15,6 +15,7 @@
 		"start:webhook": "node build/src/index_webhook_express.js",
 		"start:prod": "NODE_ENV=production node build/src/start_server_prod.js",
 		"add-admin": "tsx scripts/addFirstAdmin.ts",
+		"gramjs-auth": "tsx scripts/gramjsAuth.ts",
 		"docker:build": "docker build -t telegram-marketing-bot .",
 		"docker:run": "docker run -p 3000:3000 --env-file .env.production telegram-marketing-bot",
 		"docker:prod": "docker-compose -f docker-compose.prod.yml --env-file .env.production up -d",
@@ -31,12 +32,15 @@
 		"dotenv": "^16.4.7",
 		"express": "^4.21.2",
 		"grammy": "^1.35.0",
+		"input": "^1.0.1",
 		"mongoose": "^8.11.0",
+		"telegram": "^2.26.22",
 		"zod": "^4.0.14"
 	},
 	"devDependencies": {
 		"@types/express": "^5.0.0",
 		"@types/node": "^22.13.5",
+		"@types/node-fetch": "^2.6.13",
 		"@typescript-eslint/eslint-plugin": "^8.24.1",
 		"@typescript-eslint/parser": "^8.24.1",
 		"eslint": "^9.21.0",

@@ -1,13 +1,31 @@
-import { Context, InlineKeyboard } from 'grammy';
+import { Context } from 'grammy';
+import { InlineKeyboard } from 'grammy';
 import { User } from '../database/models/User.js';
+import { AdminUser } from '../database/models/AdminUser.js';
+import { sendMessageContentViaGramjs, downloadFileFromTelegram, getGramjsClient } from '../utils/gramjsClient.js';
+import { env } from '../env.js';
 
-// Types for user states
+// User state interface for send command flow
 interface UserState {
   step: 'awaiting_message' | 'awaiting_confirmation';
   messageId?: number;
   chatId?: number;
-  isForwarding?: boolean;
   progressMessageId?: number;
+  messageContent?: string; // Store the actual message content
+  messageType?: 'text' | 'photo' | 'video' | 'document' | 'audio' | 'voice' | 'sticker' | 'animation' | 'video_note' | 'location' | 'contact' | 'poll' | 'other';
+  mediaData?: {
+    fileId?: string;
+    fileName?: string;
+    mimeType?: string;
+    fileSize?: number;
+    duration?: number;
+    width?: number;
+    height?: number;
+    thumb?: unknown;
+    caption?: string;
+  };
+  // Cached file buffer for reuse across all users
+  fileBuffer?: Buffer;
 }
 
 // Interface for failed users with retry tracking
@@ -18,6 +36,176 @@ interface FailedUser {
 
 // Map to store user states (supports multiple concurrent users)
 const userStates = new Map<number, UserState>();
+
+// Helper function to download file buffer once for reuse
+async function downloadFileBufferOnce(userState: UserState): Promise<void> {
+  // Only download if we have media data and haven't downloaded yet
+  if (userState.mediaData?.fileId && !userState.fileBuffer && env.TELEGRAM_BOT_TOKEN) {
+    try {
+      console.log(`📥 Downloading file buffer once for reuse: ${userState.mediaData.fileId}`);
+      
+      const fileBuffer = await downloadFileFromTelegram(
+        userState.mediaData.fileId,
+        env.TELEGRAM_BOT_TOKEN,
+        userState.mediaData.mimeType,
+        userState.mediaData.fileName
+      );
+      
+      if (fileBuffer) {
+        userState.fileBuffer = fileBuffer;
+        console.log(`✅ File buffer downloaded and cached (${fileBuffer.length} bytes)`);
+      } else {
+        console.log(`❌ Failed to download file buffer for ${userState.mediaData.fileId}`);
+      }
+    } catch (error) {
+      console.error('Error downloading file buffer:', error);
+    }
+  }
+}
+
+// Helper function to send message using cached buffer via GramJS
+async function sendMessageWithCachedBuffer(
+  adminUserId: string,
+  targetUserId: string,
+  userState: UserState
+): Promise<boolean> {
+  try {
+    const client = await getGramjsClient(adminUserId);
+    if (!client) {
+      console.error(`No gramjs client available for admin ${adminUserId}`);
+      return false;
+    }
+
+    // Send based on message type with cached buffer
+    switch (userState.messageType) {
+      case 'text':
+        await client.sendMessage(targetUserId, { message: userState.messageContent || '' });
+        break;
+
+      case 'photo':
+        if (userState.fileBuffer) {
+          // Send as photo with caption
+          await client.sendMessage(targetUserId, {
+            message: userState.mediaData?.caption || userState.messageContent || '',
+            file: userState.fileBuffer
+          });
+        } else {
+          // Fallback to text
+          await client.sendMessage(targetUserId, { 
+            message: `📷 Photo: ${userState.mediaData?.caption || userState.messageContent || 'Image'}`
+          });
+        }
+        break;
+
+      case 'video':
+        if (userState.fileBuffer) {
+          await client.sendMessage(targetUserId, {
+            message: userState.mediaData?.caption || userState.messageContent || '',
+            file: userState.fileBuffer
+          });
+        } else {
+          await client.sendMessage(targetUserId, { 
+            message: `🎥 Video: ${userState.mediaData?.caption || userState.messageContent || 'Video'}`
+          });
+        }
+        break;
+
+      case 'document':
+        if (userState.fileBuffer) {
+          await client.sendMessage(targetUserId, {
+            message: userState.mediaData?.caption || userState.messageContent || '',
+            file: userState.fileBuffer
+          });
+        } else {
+          const fileName = userState.mediaData?.fileName || 'Document';
+          await client.sendMessage(targetUserId, { 
+            message: `📄 ${fileName}${userState.mediaData?.caption ? '\n\n' + userState.mediaData.caption : userState.messageContent ? '\n\n' + userState.messageContent : ''}`
+          });
+        }
+        break;
+
+      case 'audio':
+        if (userState.fileBuffer) {
+          await client.sendMessage(targetUserId, {
+            message: userState.mediaData?.caption || userState.messageContent || '',
+            file: userState.fileBuffer
+          });
+        } else {
+          const fileName = userState.mediaData?.fileName || 'Audio';
+          const duration = userState.mediaData?.duration ? ` (${Math.floor(userState.mediaData.duration / 60)}:${String(userState.mediaData.duration % 60).padStart(2, '0')})` : '';
+          await client.sendMessage(targetUserId, { 
+            message: `🎵 ${fileName}${duration}${userState.mediaData?.caption ? '\n\n' + userState.mediaData.caption : userState.messageContent ? '\n\n' + userState.messageContent : ''}`
+          });
+        }
+        break;
+
+      case 'voice':
+        if (userState.fileBuffer) {
+          await client.sendMessage(targetUserId, {
+            message: userState.messageContent || '',
+            file: userState.fileBuffer
+          });
+        } else {
+          const duration = userState.mediaData?.duration ? `${Math.floor(userState.mediaData.duration / 60)}:${String(userState.mediaData.duration % 60).padStart(2, '0')}` : '';
+          await client.sendMessage(targetUserId, { 
+            message: `🎤 Voice message${duration ? ` (${duration})` : ''}${userState.messageContent ? '\n\n' + userState.messageContent : ''}`
+          });
+        }
+        break;
+
+      case 'sticker':
+        if (userState.fileBuffer) {
+          await client.sendMessage(targetUserId, {
+            file: userState.fileBuffer
+          });
+        } else {
+          await client.sendMessage(targetUserId, { 
+            message: userState.messageContent || '🎭 Sticker'
+          });
+        }
+        break;
+
+      case 'animation':
+        if (userState.fileBuffer) {
+          await client.sendMessage(targetUserId, {
+            message: userState.mediaData?.caption || userState.messageContent || '',
+            file: userState.fileBuffer
+          });
+        } else {
+          await client.sendMessage(targetUserId, { 
+            message: `🎬 GIF: ${userState.mediaData?.caption || userState.messageContent || 'Animation'}`
+          });
+        }
+        break;
+
+      case 'video_note':
+        if (userState.fileBuffer) {
+          await client.sendMessage(targetUserId, {
+            file: userState.fileBuffer
+          });
+        } else {
+          const duration = userState.mediaData?.duration ? `${Math.floor(userState.mediaData.duration / 60)}:${String(userState.mediaData.duration % 60).padStart(2, '0')}` : '';
+          await client.sendMessage(targetUserId, { 
+            message: `📹 Video message${duration ? ` (${duration})` : ''}`
+          });
+        }
+        break;
+
+      default:
+        await client.sendMessage(targetUserId, { 
+          message: userState.messageContent || 'Media message'
+        });
+        break;
+    }
+    
+    console.log(`✅ ${userState.messageType} message sent via gramjs with cached buffer from admin ${adminUserId} to ${targetUserId}`);
+    return true;
+
+  } catch (error) {
+    console.error(`❌ Failed to send ${userState.messageType} message via gramjs with cached buffer from admin ${adminUserId}:`, error);
+    return false;
+  }
+}
 
 // Handle /send command
 export async function handleSendCommand(ctx: Context) {
@@ -70,13 +258,136 @@ async function handleMessageReceived(ctx: Context, userId: number, userState: Us
     userState.chatId = ctx.chat.id;
     userState.step = 'awaiting_confirmation';
 
+    // Extract message content and type based on message properties
+    if (ctx.message.text) {
+      // Plain text message
+      userState.messageContent = ctx.message.text;
+      userState.messageType = 'text';
+    } else if (ctx.message.photo) {
+      // Photo message
+      userState.messageContent = ctx.message.caption || 'Photo';
+      userState.messageType = 'photo';
+      const photo = ctx.message.photo[ctx.message.photo.length - 1]; // Get largest photo
+      userState.mediaData = {
+        fileId: photo.file_id,
+        fileSize: photo.file_size,
+        width: photo.width,
+        height: photo.height,
+        caption: ctx.message.caption
+      };
+    } else if (ctx.message.video) {
+      // Video message
+      userState.messageContent = ctx.message.caption || 'Video';
+      userState.messageType = 'video';
+      userState.mediaData = {
+        fileId: ctx.message.video.file_id,
+        fileName: ctx.message.video.file_name,
+        mimeType: ctx.message.video.mime_type,
+        fileSize: ctx.message.video.file_size,
+        duration: ctx.message.video.duration,
+        width: ctx.message.video.width,
+        height: ctx.message.video.height,
+        thumb: ctx.message.video.thumbnail,
+        caption: ctx.message.caption
+      };
+    } else if (ctx.message.document) {
+      // Document message
+      userState.messageContent = ctx.message.caption || ctx.message.document.file_name || 'Document';
+      userState.messageType = 'document';
+      userState.mediaData = {
+        fileId: ctx.message.document.file_id,
+        fileName: ctx.message.document.file_name,
+        mimeType: ctx.message.document.mime_type,
+        fileSize: ctx.message.document.file_size,
+        thumb: ctx.message.document.thumbnail,
+        caption: ctx.message.caption
+      };
+    } else if (ctx.message.audio) {
+      // Audio message
+      userState.messageContent = ctx.message.caption || ctx.message.audio.title || 'Audio';
+      userState.messageType = 'audio';
+      userState.mediaData = {
+        fileId: ctx.message.audio.file_id,
+        fileName: ctx.message.audio.file_name || ctx.message.audio.title,
+        mimeType: ctx.message.audio.mime_type,
+        fileSize: ctx.message.audio.file_size,
+        duration: ctx.message.audio.duration,
+        thumb: ctx.message.audio.thumbnail,
+        caption: ctx.message.caption
+      };
+    } else if (ctx.message.voice) {
+      // Voice message
+      userState.messageContent = 'Voice message';
+      userState.messageType = 'voice';
+      userState.mediaData = {
+        fileId: ctx.message.voice.file_id,
+        mimeType: ctx.message.voice.mime_type,
+        fileSize: ctx.message.voice.file_size,
+        duration: ctx.message.voice.duration
+      };
+    } else if (ctx.message.sticker) {
+      // Sticker message
+      userState.messageContent = ctx.message.sticker.emoji || 'Sticker';
+      userState.messageType = 'sticker';
+      userState.mediaData = {
+        fileId: ctx.message.sticker.file_id,
+        fileSize: ctx.message.sticker.file_size,
+        width: ctx.message.sticker.width,
+        height: ctx.message.sticker.height,
+        thumb: ctx.message.sticker.thumbnail
+      };
+    } else if (ctx.message.animation) {
+      // GIF/Animation message
+      userState.messageContent = ctx.message.caption || 'GIF/Animation';
+      userState.messageType = 'animation';
+      userState.mediaData = {
+        fileId: ctx.message.animation.file_id,
+        fileName: ctx.message.animation.file_name,
+        mimeType: ctx.message.animation.mime_type,
+        fileSize: ctx.message.animation.file_size,
+        duration: ctx.message.animation.duration,
+        width: ctx.message.animation.width,
+        height: ctx.message.animation.height,
+        thumb: ctx.message.animation.thumbnail,
+        caption: ctx.message.caption
+      };
+    } else if (ctx.message.video_note) {
+      // Video note (circular video)
+      userState.messageContent = 'Video message';
+      userState.messageType = 'video_note';
+      userState.mediaData = {
+        fileId: ctx.message.video_note.file_id,
+        fileSize: ctx.message.video_note.file_size,
+        duration: ctx.message.video_note.duration,
+        thumb: ctx.message.video_note.thumbnail
+      };
+    } else if (ctx.message.location) {
+      // Location message
+      userState.messageContent = `Location: ${ctx.message.location.latitude}, ${ctx.message.location.longitude}`;
+      userState.messageType = 'location';
+    } else if (ctx.message.contact) {
+      // Contact message
+      const contact = ctx.message.contact;
+      userState.messageContent = `Contact: ${contact.first_name} ${contact.last_name || ''} (${contact.phone_number})`;
+      userState.messageType = 'contact';
+    } else if (ctx.message.poll) {
+      // Poll message
+      userState.messageContent = `Poll: ${ctx.message.poll.question}`;
+      userState.messageType = 'poll';
+    } else {
+      // Unknown message type
+      userState.messageContent = 'Media message';
+      userState.messageType = 'other';
+    }
+
     // Forward the message back to user for confirmation
     await ctx.api.copyMessage(ctx.chat.id, ctx.chat.id, ctx.message.message_id);
 
     // Create inline keyboard for confirmation
     const keyboard = new InlineKeyboard().text('✅ Yes, Send to All', 'confirm_send').text('❌ Cancel', 'cancel_send');
 
-    await ctx.reply('📤 This is the message that will be sent to all users. Do you want to proceed?', {
+    const messageTypeText = userState.messageType === 'text' ? 'message' : `${userState.messageType} message`;
+    await ctx.reply(`📤 This ${messageTypeText} will be sent to all users. Do you want to proceed?`, {
       reply_markup: keyboard,
     });
   } catch (error) {
@@ -103,7 +414,6 @@ async function handleCallbackQuery(ctx: Context, userId: number, userState: User
       }
 
       // Start forwarding process
-      userState.isForwarding = true;
       await startForwardingProcess(ctx, userId, userState);
     } else if (data === 'cancel_send') {
       await ctx.reply('❌ Send operation cancelled.');
@@ -131,9 +441,26 @@ async function startForwardingProcess(ctx: Context, userId: number, userState: U
       return;
     }
 
+    // Check if admin has gramjs configured
+    const adminUser = await AdminUser.findOne({ 
+      userId: userId.toString(), 
+      isActive: true,
+      gramjsActive: true,
+      gramjsSession: { $exists: true, $ne: null }
+    });
+
+    const useGramjs = !!adminUser;
+    const sendMethod = useGramjs ? '🔗 GramJS (Personal Account)' : '🤖 Bot API';
+
+    // Download file buffer once if we have media content
+    if (userState.messageType && userState.messageType !== 'text') {
+      await ctx.reply('📥 Downloading media file for distribution...');
+      await downloadFileBufferOnce(userState);
+    }
+
     // Send initial progress message
     const progressMessage = await ctx.reply(
-      `🚀 Starting to send message to ${totalUsers} users...\n📊 Progress: 0/${totalUsers} (0%)`,
+      `🚀 Starting to send message to ${totalUsers} users...\n📊 Progress: 0/${totalUsers} (0%)\n📡 Method: ${sendMethod}`,
     );
     userState.progressMessageId = progressMessage.message_id;
 
@@ -148,7 +475,7 @@ async function startForwardingProcess(ctx: Context, userId: number, userState: U
 
     // Initial send attempt
     const { successCount, failureCount, failedUserIds } = await sendToUsers(
-      ctx, users, userState, batchSize, delayBetweenBatches, totalUsers, 0, 0, 'Initial'
+      ctx, users, userState, batchSize, delayBetweenBatches, totalUsers, 0, 0, 'Initial', useGramjs, userId.toString()
     );
 
     totalSuccessCount = successCount;
@@ -182,7 +509,7 @@ async function startForwardingProcess(ctx: Context, userId: number, userState: U
       // Retry sending to failed users
       const retryResult = await sendToUsers(
         ctx, usersToRetry, userState, batchSize, delayBetweenBatches, 
-        totalUsers, totalSuccessCount, totalFailureCount, `Retry ${retryAttempt}`
+        totalUsers, totalSuccessCount, totalFailureCount, `Retry ${retryAttempt}`, useGramjs, userId.toString()
       );
 
       // Update counters
@@ -217,7 +544,7 @@ async function startForwardingProcess(ctx: Context, userId: number, userState: U
     // Send final completion message
     const finalSuccessRate = Math.round((totalSuccessCount / totalUsers) * 100);
     await ctx.reply(
-      `✅ Message forwarding completed with retries!\n\n📊 Final Results:\n👥 Total Users: ${totalUsers}\n✅ Successfully Sent: ${totalSuccessCount}\n❌ Failed (after ${maxRetries} retries): ${totalFailureCount}\n📈 Success Rate: ${finalSuccessRate}%\n\n🔄 Retry Summary:\n• Failed users were retried up to ${maxRetries} times\n• All retry attempts completed`
+      `✅ Message forwarding completed with retries!\n\n📊 Final Results:\n👥 Total Users: ${totalUsers}\n✅ Successfully Sent: ${totalSuccessCount}\n❌ Failed (after ${maxRetries} retries): ${totalFailureCount}\n📈 Success Rate: ${finalSuccessRate}%\n📡 Method Used: ${sendMethod}\n\n🔄 Retry Summary:\n• Failed users were retried up to ${maxRetries} times\n• All retry attempts completed`
     );
 
   } catch (error) {
@@ -239,7 +566,9 @@ async function sendToUsers(
   totalUsers: number,
   currentSuccessCount: number,
   currentFailureCount: number,
-  attemptType: string
+  attemptType: string,
+  useGramjs: boolean = false,
+  adminUserId?: string
 ): Promise<{ successCount: number; failureCount: number; failedUserIds: string[] }> {
   let successCount = currentSuccessCount;
   let failureCount = currentFailureCount;
@@ -252,8 +581,55 @@ async function sendToUsers(
     // Process batch concurrently
     const batchPromises = batch.map(async (user) => {
       try {
-        await ctx.api.copyMessage(user.userId, userState.chatId!, userState.messageId!);
-        return { success: true, userId: user.userId };
+        if (useGramjs && adminUserId) {
+          // Use cached buffer if available, otherwise fall back to original method
+          if (userState.fileBuffer) {
+            const gramjsSuccess = await sendMessageWithCachedBuffer(
+              adminUserId,
+              user.userId,
+              userState
+            );
+            
+            if (gramjsSuccess) {
+              return { success: true, userId: user.userId };
+            } else {
+              // Fallback to bot API if gramjs fails
+              console.log(`GramJS with cached buffer failed for user ${user.userId}, falling back to bot API`);
+              await ctx.api.copyMessage(user.userId, userState.chatId!, userState.messageId!);
+              return { success: true, userId: user.userId };
+            }
+          } else {
+            // Fall back to original method if no cached buffer
+            if (userState.messageContent) {
+              const gramjsSuccess = await sendMessageContentViaGramjs(
+                adminUserId,
+                user.userId,
+                userState.messageContent,
+                userState.messageType || 'text',
+                userState.mediaData,
+                env.TELEGRAM_BOT_TOKEN
+              );
+              
+              if (gramjsSuccess) {
+                return { success: true, userId: user.userId };
+              } else {
+                // Fallback to bot API if gramjs fails
+                console.log(`GramJS failed for user ${user.userId}, falling back to bot API`);
+                await ctx.api.copyMessage(user.userId, userState.chatId!, userState.messageId!);
+                return { success: true, userId: user.userId };
+              }
+            } else {
+              // No message content available, use bot API
+              console.log(`No message content for GramJS, using bot API for user ${user.userId}`);
+              await ctx.api.copyMessage(user.userId, userState.chatId!, userState.messageId!);
+              return { success: true, userId: user.userId };
+            }
+          }
+        } else {
+          // Use bot API
+          await ctx.api.copyMessage(user.userId, userState.chatId!, userState.messageId!);
+          return { success: true, userId: user.userId };
+        }
       } catch (error) {
         console.error(`Failed to send to user ${user.userId} (${attemptType}):`, error);
         return { success: false, userId: user.userId };
@@ -279,10 +655,11 @@ async function sendToUsers(
     // Update progress every 5% or at the end of each batch
     if (progressPercentage % 5 === 0 || processedCount === totalUsers || i + batchSize >= users.length) {
       try {
+        const methodText = useGramjs ? '🔗 GramJS' : '🤖 Bot API';
         await ctx.api.editMessageText(
           ctx.chat!.id,
           userState.progressMessageId!,
-          `🚀 ${attemptType} sending...\n📊 Progress: ${processedCount}/${totalUsers} (${progressPercentage}%)\n✅ Successful: ${successCount}\n❌ Failed: ${failureCount}`,
+          `🚀 ${attemptType} sending...\n📊 Progress: ${processedCount}/${totalUsers} (${progressPercentage}%)\n✅ Successful: ${successCount}\n❌ Failed: ${failureCount}\n📡 Method: ${methodText}`,
         );
       } catch (editError) {
         // Ignore edit errors (message might be too old)

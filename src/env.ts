@@ -6,6 +6,8 @@ export const env = createEnv({
   server: {
     // Telegram Bot Configuration
     TELEGRAM_BOT_TOKEN: z.string().min(1, "Telegram bot token is required"),
+    API_ID: z.string().min(1, "API ID is required"),
+    API_HASH: z.string().min(1, "API HASH is required"),
     
     // Database Configuration
     MONGODB_URI: z.string().min(1, "MongoDB URI is required"),

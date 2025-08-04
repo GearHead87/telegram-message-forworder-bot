@@ -129,11 +129,24 @@ export async function handleAdminHelpCommand(ctx: Context) {
 • /listadmins - List all active admins
 • /adminhelp - Show this admin help
 
+🔗 GramJS Commands (Enhanced Messaging):
+• /gramjs_setup - Configure your personal Telegram account
+• /gramjs_authenticate - Complete authentication process
+• /gramjs_test - Test your GramJS connection
+• /gramjs_status - Check GramJS configuration status
+• /gramjs_reset - Reset GramJS configuration
+
 📝 How to use /send:
 1. Type /send
 2. Send the message you want to broadcast
 3. Confirm your message
 4. The bot will send it to all users
+
+🔗 Enhanced Messaging with GramJS:
+• Configure your personal Telegram account with /gramjs_setup
+• Messages will be sent from your personal account (not the bot)
+• Can reach users who haven't started the bot
+• Automatic fallback to bot API if GramJS fails
 
 👥 Admin Management:
 • Only admins can use the /send command

@@ -1,17 +1,46 @@
-import express from 'express';
+import express, { RequestHandler } from 'express';
 import { webhookCallback } from 'grammy';
 import { bot, initializeBot } from './index.js';
+import { getOtpForm, postOtpSubmission, getOtpStatus, createOtpSession } from './controllers/AuthControllers.js';
 
 // Create Express app
 const app = express();
 
 // Middleware to parse JSON
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Temporary storage for OTP sessions (in production, use Redis or database)
+interface OTPSession {
+  userId: string;
+  type: 'code' | 'password';
+  timestamp: number;
+  otp?: string;
+  confirmed?: boolean;
+}
+
+const otpSessions = new Map<string, OTPSession>();
+
+// Clean up expired sessions (older than 10 minutes)
+setInterval(() => {
+  const now = Date.now();
+  for (const [sessionId, session] of otpSessions.entries()) {
+    if (now - session.timestamp > 10 * 60 * 1000) { // 10 minutes
+      otpSessions.delete(sessionId);
+    }
+  }
+}, 60000); // Clean every minute
 
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.json({ status: 'OK', timestamp: new Date().toISOString() });
 });
+
+// Use route handlers from AuthControllers
+app.get('/otp/:sessionId', getOtpForm as RequestHandler);
+app.post('/otp/:sessionId', postOtpSubmission as RequestHandler);
+app.get('/api/otp-status/:sessionId', getOtpStatus as RequestHandler);
+app.post('/api/create-otp-session', createOtpSession as RequestHandler);
 
 // Webhook endpoint for Telegram
 app.use('/webhook', webhookCallback(bot, 'express'));
