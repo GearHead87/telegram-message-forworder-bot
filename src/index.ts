@@ -141,10 +141,17 @@ async function initializeBot(): Promise<void> {
       { command: 'start', description: 'Start the bot' },
       { command: 'help', description: 'Show help information' },
       { command: 'send', description: '[Admin] Send message to all users' },
+      // admin Related Commands
       { command: 'addadmin', description: '[Admin] Add a new admin' },
       { command: 'removeadmin', description: '[Admin] Remove admin access' },
       { command: 'listadmins', description: '[Admin] List all admins' },
       { command: 'adminhelp', description: '[Admin] Show admin help' },
+      // gramjs Related Commands
+      { command: 'gramjs_setup', description: '[Admin] Setup gramjs' },
+      { command: 'gramjs_authenticate', description: '[Admin] Authenticate gramjs' },
+      { command: 'gramjs_test', description: '[Admin] Test gramjs' },
+      { command: 'gramjs_status', description: '[Admin] Show gramjs status' },
+      { command: 'gramjs_reset', description: '[Admin] Reset gramjs' },
     ]);
 
     console.log('✅ Bot commands set successfully');
