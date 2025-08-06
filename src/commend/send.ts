@@ -4,6 +4,8 @@ import { User } from '../database/models/User.js';
 import { AdminUser } from '../database/models/AdminUser.js';
 import { sendMessageContentViaGramjs, downloadFileFromTelegram, getGramjsClient } from '../utils/gramjsClient.js';
 import { env } from '../env.js';
+import { Api } from 'telegram';
+import { CustomFile } from 'telegram/client/uploads.js';
 
 // User state interface for send command flow
 interface UserState {
@@ -84,11 +86,30 @@ async function sendMessageWithCachedBuffer(
 
       case 'photo':
         if (userState.fileBuffer) {
+          // Upload and send photo using SendMedia API
+          const result: Api.TypeUpdates = await client.invoke(
+            new Api.messages.SendMedia({
+              peer: targetUserId,
+              message: userState.mediaData?.caption || userState.messageContent || '',
+              media: new Api.InputMediaUploadedPhoto({
+                file: await client.uploadFile({
+                  file: new CustomFile(
+                    'photo.jpg',
+                    userState.fileBuffer.length,
+                    "../photo.jpg",
+                    userState.fileBuffer
+                  ),  
+                  workers: 1
+                }),
+              })
+            })
+          );
+          console.log(result);
           // Send as photo with caption
-          await client.sendMessage(targetUserId, {
-            message: userState.mediaData?.caption || userState.messageContent || '',
-            file: userState.fileBuffer
-          });
+          // await client.sendMessage(targetUserId, {
+          //   message: userState.mediaData?.caption || userState.messageContent || '',
+          //   file: userState.fileBuffer
+          // });
         } else {
           // Fallback to text
           await client.sendMessage(targetUserId, { 
