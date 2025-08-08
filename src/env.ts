@@ -17,7 +17,7 @@ export const env = createEnv({
     // Server Configuration
     NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
     PORT: z.string().regex(/^\d+$/).transform(Number).default(() => 3000),
-    SERVER_URL: z.string().url().optional(),
+    SERVER_URL: z.string().url(),
 
     // Logging Configuration
     LOG_LEVEL: z.enum(['error', 'warn', 'info', 'debug']).default('info'),
