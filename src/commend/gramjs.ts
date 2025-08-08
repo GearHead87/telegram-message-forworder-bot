@@ -345,7 +345,7 @@ async function handleAuthStartStep(ctx: Context, userId: number, authState: Gram
       password: async () => {
         // Create secure OTP session for 2FA password
         try {
-          const sessionResponse = await fetch('api/create-otp-session', {
+          const sessionResponse = await fetch(`${env.SERVER_URL}/api/create-otp-session`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ userId: userId.toString(), type: 'password' })
@@ -388,7 +388,7 @@ Your account has 2FA enabled for additional security.
       phoneCode: async () => {
         // Create secure OTP session for verification code
         try {
-          const sessionResponse = await fetch('api/create-otp-session', {
+          const sessionResponse = await fetch(`${env.SERVER_URL}/api/create-otp-session`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ userId: userId.toString(), type: 'code' })
@@ -471,7 +471,7 @@ async function handleAuthCodeStep(ctx: Context, userId: number, authState: Gramj
 
     try {
       // Check if OTP was submitted through web interface
-      const response = await fetch(`api/otp-status/${authState.sessionId}`);
+      const response = await fetch(`${env.SERVER_URL}/api/otp-status/${authState.sessionId}`);
       if (!response.ok) {
         await ctx.reply('❌ No OTP session found. Please use the web link provided earlier.');
         return;
@@ -532,7 +532,7 @@ async function handleAuthPasswordStep(ctx: Context, userId: number, authState: G
 
     try {
       // Check if password was submitted through web interface
-      const response = await fetch(`/api/otp-status/${authState.sessionId}`);
+      const response = await fetch(`${env.SERVER_URL}/api/otp-status/${authState.sessionId}`);
       if (!response.ok) {
         await ctx.reply('❌ No OTP session found. Please use the web link provided earlier.');
         return;
