@@ -6,6 +6,7 @@ import { sendMessageContentViaGramjs, downloadFileFromTelegram, getGramjsClient 
 import { env } from '../env.js';
 import { Api } from 'telegram';
 import { CustomFile } from 'telegram/client/uploads.js';
+import type { TelegramClient } from 'telegram';
 
 // User state interface for send command flow
 interface UserState {
@@ -36,8 +37,40 @@ interface FailedUser {
   triedCount: number;
 }
 
+// Rate limit configuration
+const PER_SEND_DELAY_MS = 300; // wait after each send
+const GROUP_SEND_COUNT = 10;   // after this many sends, pause longer
+const GROUP_DELAY_MS = 3000;   // long pause duration
+
 // Map to store user states (supports multiple concurrent users)
 const userStates = new Map<number, UserState>();
+
+function sleep(ms: number): Promise<void> { return new Promise(r => setTimeout(r, ms)); }
+
+function parseRetryAfterMs(error: unknown): number {
+  const msg = typeof error === 'string' ? error : (error as any)?.message || (error as any)?.description || '';
+  if (!msg) return 0;
+  // Bot API: Too Many Requests: retry after X
+  const botMatch = /retry after (\d+)/i.exec(msg);
+  if (botMatch) return (parseInt(botMatch[1], 10) || 0) * 1000;
+  // GramJS/Telegram: FLOOD_WAIT_X
+  const floodMatch = /FLOOD_WAIT_(\d+)/i.exec(msg);
+  if (floodMatch) return (parseInt(floodMatch[1], 10) || 0) * 1000;
+  // Some gramjs errors: "A wait of X seconds is required"
+  const waitMatch = /wait of (\d+) seconds/i.exec(msg);
+  if (waitMatch) return (parseInt(waitMatch[1], 10) || 0) * 1000;
+  return 0;
+}
+
+async function ensureClientConnected(client: TelegramClient): Promise<void> {
+  if (!client.connected) {
+    try {
+      await client.connect();
+    } catch (err) {
+      console.warn('GramJS ensure connect failed, will retry later:', err);
+    }
+  }
+}
 
 // Helper function to download file buffer once for reuse
 async function downloadFileBufferOnce(userState: UserState): Promise<void> {
@@ -69,11 +102,12 @@ async function downloadFileBufferOnce(userState: UserState): Promise<void> {
 async function sendMessageWithCachedBuffer(
   adminUserId: string,
   targetUserId: string,
-  userState: UserState
+  userState: UserState,
+  client?: TelegramClient
 ): Promise<boolean> {
   try {
-    const client = await getGramjsClient(adminUserId);
-    if (!client) {
+    const activeClient = client ?? (await getGramjsClient(adminUserId));
+    if (!activeClient) {
       console.error(`No gramjs client available for admin ${adminUserId}`);
       return false;
     }
@@ -81,18 +115,18 @@ async function sendMessageWithCachedBuffer(
     // Send based on message type with cached buffer
     switch (userState.messageType) {
       case 'text':
-        await client.sendMessage(targetUserId, { message: userState.messageContent || '' });
+        await activeClient.sendMessage(targetUserId, { message: userState.messageContent || '' });
         break;
 
       case 'photo':
         if (userState.fileBuffer) {
           // Upload and send photo using SendMedia API
-          const result: Api.TypeUpdates = await client.invoke(
+          const result: Api.TypeUpdates = await activeClient.invoke(
             new Api.messages.SendMedia({
               peer: targetUserId,
               message: userState.mediaData?.caption || userState.messageContent || '',
               media: new Api.InputMediaUploadedPhoto({
-                file: await client.uploadFile({
+                file: await activeClient.uploadFile({
                   file: new CustomFile(
                     'photo.jpg',
                     userState.fileBuffer.length,
@@ -112,7 +146,7 @@ async function sendMessageWithCachedBuffer(
           // });
         } else {
           // Fallback to text
-          await client.sendMessage(targetUserId, { 
+          await activeClient.sendMessage(targetUserId, { 
             message: `📷 Photo: ${userState.mediaData?.caption || userState.messageContent || 'Image'}`
           });
         }
@@ -120,12 +154,12 @@ async function sendMessageWithCachedBuffer(
 
       case 'video':
         if (userState.fileBuffer) {
-          await client.sendMessage(targetUserId, {
+          await activeClient.sendMessage(targetUserId, {
             message: userState.mediaData?.caption || userState.messageContent || '',
             file: userState.fileBuffer
           });
         } else {
-          await client.sendMessage(targetUserId, { 
+          await activeClient.sendMessage(targetUserId, { 
             message: `🎥 Video: ${userState.mediaData?.caption || userState.messageContent || 'Video'}`
           });
         }
@@ -133,13 +167,13 @@ async function sendMessageWithCachedBuffer(
 
       case 'document':
         if (userState.fileBuffer) {
-          await client.sendMessage(targetUserId, {
+          await activeClient.sendMessage(targetUserId, {
             message: userState.mediaData?.caption || userState.messageContent || '',
             file: userState.fileBuffer
           });
         } else {
           const fileName = userState.mediaData?.fileName || 'Document';
-          await client.sendMessage(targetUserId, { 
+          await activeClient.sendMessage(targetUserId, { 
             message: `📄 ${fileName}${userState.mediaData?.caption ? '\n\n' + userState.mediaData.caption : userState.messageContent ? '\n\n' + userState.messageContent : ''}`
           });
         }
@@ -147,14 +181,14 @@ async function sendMessageWithCachedBuffer(
 
       case 'audio':
         if (userState.fileBuffer) {
-          await client.sendMessage(targetUserId, {
+          await activeClient.sendMessage(targetUserId, {
             message: userState.mediaData?.caption || userState.messageContent || '',
             file: userState.fileBuffer
           });
         } else {
           const fileName = userState.mediaData?.fileName || 'Audio';
           const duration = userState.mediaData?.duration ? ` (${Math.floor(userState.mediaData.duration / 60)}:${String(userState.mediaData.duration % 60).padStart(2, '0')})` : '';
-          await client.sendMessage(targetUserId, { 
+          await activeClient.sendMessage(targetUserId, { 
             message: `🎵 ${fileName}${duration}${userState.mediaData?.caption ? '\n\n' + userState.mediaData.caption : userState.messageContent ? '\n\n' + userState.messageContent : ''}`
           });
         }
@@ -162,13 +196,13 @@ async function sendMessageWithCachedBuffer(
 
       case 'voice':
         if (userState.fileBuffer) {
-          await client.sendMessage(targetUserId, {
+          await activeClient.sendMessage(targetUserId, {
             message: userState.messageContent || '',
             file: userState.fileBuffer
           });
         } else {
           const duration = userState.mediaData?.duration ? `${Math.floor(userState.mediaData.duration / 60)}:${String(userState.mediaData.duration % 60).padStart(2, '0')}` : '';
-          await client.sendMessage(targetUserId, { 
+          await activeClient.sendMessage(targetUserId, { 
             message: `🎤 Voice message${duration ? ` (${duration})` : ''}${userState.messageContent ? '\n\n' + userState.messageContent : ''}`
           });
         }
@@ -176,11 +210,11 @@ async function sendMessageWithCachedBuffer(
 
       case 'sticker':
         if (userState.fileBuffer) {
-          await client.sendMessage(targetUserId, {
+          await activeClient.sendMessage(targetUserId, {
             file: userState.fileBuffer
           });
         } else {
-          await client.sendMessage(targetUserId, { 
+          await activeClient.sendMessage(targetUserId, { 
             message: userState.messageContent || '🎭 Sticker'
           });
         }
@@ -188,12 +222,12 @@ async function sendMessageWithCachedBuffer(
 
       case 'animation':
         if (userState.fileBuffer) {
-          await client.sendMessage(targetUserId, {
+          await activeClient.sendMessage(targetUserId, {
             message: userState.mediaData?.caption || userState.messageContent || '',
             file: userState.fileBuffer
           });
         } else {
-          await client.sendMessage(targetUserId, { 
+          await activeClient.sendMessage(targetUserId, { 
             message: `🎬 GIF: ${userState.mediaData?.caption || userState.messageContent || 'Animation'}`
           });
         }
@@ -201,19 +235,19 @@ async function sendMessageWithCachedBuffer(
 
       case 'video_note':
         if (userState.fileBuffer) {
-          await client.sendMessage(targetUserId, {
+          await activeClient.sendMessage(targetUserId, {
             file: userState.fileBuffer
           });
         } else {
           const duration = userState.mediaData?.duration ? `${Math.floor(userState.mediaData.duration / 60)}:${String(userState.mediaData.duration % 60).padStart(2, '0')}` : '';
-          await client.sendMessage(targetUserId, { 
+          await activeClient.sendMessage(targetUserId, { 
             message: `📹 Video message${duration ? ` (${duration})` : ''}`
           });
         }
         break;
 
       default:
-        await client.sendMessage(targetUserId, { 
+        await activeClient.sendMessage(targetUserId, { 
           message: userState.messageContent || 'Media message'
         });
         break;
@@ -499,8 +533,8 @@ async function startForwardingProcess(ctx: Context, userId: number, userState: U
 
     let totalSuccessCount = 0;
     let totalFailureCount = 0;
-    const batchSize = 30; // Process in batches to avoid rate limits
-    const delayBetweenBatches = 1000; // 1 second delay between batches
+    const batchSize = 1; // process sequentially to avoid rate limits
+    const delayBetweenBatches = 0; // managed by per-send/group delays
     const maxRetries = 3;
 
     // Array to track failed users with retry counts
@@ -607,90 +641,114 @@ async function sendToUsers(
   let failureCount = currentFailureCount;
   const failedUserIds: string[] = [];
 
+  // Reuse one GramJS client for the entire run if needed
+  let gramClient: TelegramClient | undefined;
+  if (useGramjs && adminUserId) {
+    const maybeClient = await getGramjsClient(adminUserId);
+    if (maybeClient) {
+      await ensureClientConnected(maybeClient as TelegramClient);
+      gramClient = maybeClient as TelegramClient;
+    }
+  }
+
   // Process users in batches
   for (let i = 0; i < users.length; i += batchSize) {
     const batch = users.slice(i, i + batchSize);
 
-    // Process batch concurrently
-    const batchPromises = batch.map(async (user) => {
+    // Process batch sequentially to throttle requests
+    const batchResults: { success: boolean; userId: string }[] = [];
+    let sendsSinceGroupPause = 0;
+    for (const user of batch) {
+      let success = false;
       try {
         if (useGramjs && adminUserId) {
-          // Use cached buffer if available, otherwise fall back to original method
           if (userState.fileBuffer) {
-            const gramjsSuccess = await sendMessageWithCachedBuffer(
-              adminUserId,
-              user.userId,
-              userState
-            );
-            
-            if (gramjsSuccess) {
-              return { success: true, userId: user.userId };
-            } else {
-              // Fallback to bot API if gramjs fails
+            if (gramClient) await ensureClientConnected(gramClient);
+            const gramjsSuccess = await sendMessageWithCachedBuffer(adminUserId, user.userId, userState, gramClient);
+            success = gramjsSuccess;
+            if (!gramjsSuccess) {
               console.log(`GramJS with cached buffer failed for user ${user.userId}, falling back to bot API`);
               try {
                 await ctx.api.copyMessage(user.userId, userState.chatId!, userState.messageId!);
-                return { success: true, userId: user.userId };
+                success = true;
               } catch (botErr) {
                 console.error(`Bot API copyMessage failed for user ${user.userId}:`, botErr);
-                return { success: false, userId: user.userId };
+                const waitMs = parseRetryAfterMs(botErr);
+                if (waitMs > 0) {
+                  console.log(`⏳ Bot API rate-limited. Waiting ${waitMs}ms before continuing...`);
+                  await sleep(waitMs + 500);
+                }
+              }
+            }
+          } else if (userState.messageContent) {
+            if (gramClient) await ensureClientConnected(gramClient);
+            const gramjsSuccess = await sendMessageContentViaGramjs(
+              adminUserId,
+              user.userId,
+              userState.messageContent,
+              userState.messageType || 'text'
+            );
+            success = gramjsSuccess;
+            if (!gramjsSuccess) {
+              console.log(`GramJS failed for user ${user.userId}, falling back to bot API`);
+              try {
+                await ctx.api.copyMessage(user.userId, userState.chatId!, userState.messageId!);
+                success = true;
+              } catch (botErr) {
+                console.error(`Bot API copyMessage failed for user ${user.userId}:`, botErr);
+                const waitMs = parseRetryAfterMs(botErr);
+                if (waitMs > 0) {
+                  console.log(`⏳ Bot API rate-limited. Waiting ${waitMs}ms before continuing...`);
+                  await sleep(waitMs + 500);
+                }
               }
             }
           } else {
-            // Fall back to original method if no cached buffer
-            if (userState.messageContent) {
-              const gramjsSuccess = await sendMessageContentViaGramjs(
-                adminUserId,
-                user.userId,
-                userState.messageContent,
-                userState.messageType || 'text'
-              );
-              
-              if (gramjsSuccess) {
-                return { success: true, userId: user.userId };
-              } else {
-                // Fallback to bot API if gramjs fails
-                console.log(`GramJS failed for user ${user.userId}, falling back to bot API`);
-                try {
-                  await ctx.api.copyMessage(user.userId, userState.chatId!, userState.messageId!);
-                  return { success: true, userId: user.userId };
-                } catch (botErr) {
-                  console.error(`Bot API copyMessage failed for user ${user.userId}:`, botErr);
-                  return { success: false, userId: user.userId };
-                }
-              }
-            } else {
-              // No message content available, use bot API
-              console.log(`No message content for GramJS, using bot API for user ${user.userId}`);
-              try {
-                await ctx.api.copyMessage(user.userId, userState.chatId!, userState.messageId!);
-                return { success: true, userId: user.userId };
-              } catch (botErr) {
-                console.error(`Bot API copyMessage failed for user ${user.userId}:`, botErr);
-                return { success: false, userId: user.userId };
+            console.log(`No message content for GramJS, using bot API for user ${user.userId}`);
+            try {
+              await ctx.api.copyMessage(user.userId, userState.chatId!, userState.messageId!);
+              success = true;
+            } catch (botErr) {
+              console.error(`Bot API copyMessage failed for user ${user.userId}:`, botErr);
+              const waitMs = parseRetryAfterMs(botErr);
+              if (waitMs > 0) {
+                console.log(`⏳ Bot API rate-limited. Waiting ${waitMs}ms before continuing...`);
+                await sleep(waitMs + 500);
               }
             }
           }
         } else {
-          // Use bot API
           try {
             await ctx.api.copyMessage(user.userId, userState.chatId!, userState.messageId!);
-            return { success: true, userId: user.userId };
+            success = true;
           } catch (botErr) {
             console.error(`Bot API copyMessage failed for user ${user.userId}:`, botErr);
-            return { success: false, userId: user.userId };
+            const waitMs = parseRetryAfterMs(botErr);
+            if (waitMs > 0) {
+              console.log(`⏳ Bot API rate-limited. Waiting ${waitMs}ms before continuing...`);
+              await sleep(waitMs + 500);
+            }
           }
         }
-      } catch (error) {
-        console.error(`Failed to send to user ${user.userId} (${attemptType}):`, error);
-        return { success: false, userId: user.userId };
+      } catch (err) {
+        console.error(`Failed to send to user ${user.userId} (${attemptType}):`, err);
+        const waitMs = parseRetryAfterMs(err);
+        if (waitMs > 0) {
+          console.log(`⏳ Rate-limited (GramJS). Waiting ${waitMs}ms before continuing...`);
+          await sleep(waitMs + 500);
+        }
       }
-    });
 
-    // Wait for batch to complete without letting one rejection crash all
-    const batchResults = await Promise.allSettled(batchPromises).then(results =>
-      results.map(r => (r.status === 'fulfilled' ? r.value : { success: false, userId: (r as any).reason?.userId || 'unknown' }))
-    );
+      batchResults.push({ success, userId: user.userId });
+
+      // Throttle: per-send delay
+      await sleep(PER_SEND_DELAY_MS);
+      sendsSinceGroupPause++;
+      if (sendsSinceGroupPause >= GROUP_SEND_COUNT) {
+        await sleep(GROUP_DELAY_MS);
+        sendsSinceGroupPause = 0;
+      }
+    }
 
     // Count successes and failures
     batchResults.forEach((result) => {
