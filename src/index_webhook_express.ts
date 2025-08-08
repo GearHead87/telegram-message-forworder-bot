@@ -98,7 +98,6 @@ app.get('/webhook-info', async (req, res) => {
 async function startServer() {
   try {
     await initializeBot();
-    
     // Start the server
     const PORT = process.env.PORT || 3000;
     app.listen(PORT, () => {

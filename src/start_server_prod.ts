@@ -4,6 +4,7 @@ import express from 'express';
 import { webhookCallback } from 'grammy';
 import { bot, initializeBot } from './index.js';
 import type { Request, Response, NextFunction } from 'express';
+import { getOtpForm, postOtpSubmission, getOtpStatus, createOtpSession } from './controllers/AuthControllers.js';
 
 // Production-ready server with clustering
 const numCPUs = os.cpus().length;
@@ -86,6 +87,12 @@ if (cluster.isPrimary) {
     });
     next();
   });
+
+  // OTP session endpoints
+  app.get('/otp/:sessionId', getOtpForm as unknown as NextFunction);
+  app.post('/otp/:sessionId', postOtpSubmission as unknown as NextFunction);
+  app.get('/api/otp-status/:sessionId', getOtpStatus as unknown as NextFunction);
+  app.post('/api/create-otp-session', createOtpSession as unknown as NextFunction);
 
   // Health check endpoint with detailed information
   app.get('/health', async (req: Request, res: Response): Promise<void> => {
