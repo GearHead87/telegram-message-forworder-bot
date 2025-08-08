@@ -3,6 +3,7 @@ import { TelegramClient } from 'telegram';
 import { StringSession } from 'telegram/sessions/index.js';
 import { AdminUser } from '../database/models/AdminUser.js';
 import { testGramjsConnection } from '../utils/gramjsClient.js';
+import {env} from "../env.js"
 
 // Interface for OTP response data
 interface OTPResponseData {
@@ -344,7 +345,7 @@ async function handleAuthStartStep(ctx: Context, userId: number, authState: Gram
       password: async () => {
         // Create secure OTP session for 2FA password
         try {
-          const sessionResponse = await fetch('http://localhost:3000/api/create-otp-session', {
+          const sessionResponse = await fetch('api/create-otp-session', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ userId: userId.toString(), type: 'password' })
@@ -360,7 +361,7 @@ Your account has 2FA enabled for additional security.
 
 🔐 **For your security, please enter your 2FA password through our secure web form:**
 
-🌐 **Link:** http://localhost:3000${sessionData.url}
+🌐 **Link:** ${env.SERVER_URL}/${sessionData.url}
 
 **Steps:**
 1. 🔒 Open the link above in your browser
@@ -387,7 +388,7 @@ Your account has 2FA enabled for additional security.
       phoneCode: async () => {
         // Create secure OTP session for verification code
         try {
-          const sessionResponse = await fetch('http://localhost:3000/api/create-otp-session', {
+          const sessionResponse = await fetch('api/create-otp-session', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ userId: userId.toString(), type: 'code' })
@@ -403,7 +404,7 @@ A verification code has been sent to your Telegram app (${authState.adminUser!.g
 
 🔐 **For your security, please enter the code through our secure web form:**
 
-🌐 **Link:** http://localhost:3000${sessionData.url}
+🌐 **Link:** ${env.SERVER_URL}/${sessionData.url}
 
 **Steps:**
 1. 📱 Open the link above in your browser
@@ -470,7 +471,7 @@ async function handleAuthCodeStep(ctx: Context, userId: number, authState: Gramj
 
     try {
       // Check if OTP was submitted through web interface
-      const response = await fetch(`http://localhost:3000/api/otp-status/${authState.sessionId}`);
+      const response = await fetch(`api/otp-status/${authState.sessionId}`);
       if (!response.ok) {
         await ctx.reply('❌ No OTP session found. Please use the web link provided earlier.');
         return;
@@ -508,7 +509,7 @@ async function handleAuthCodeStep(ctx: Context, userId: number, authState: Gramj
 
 To protect your account, please enter your verification code through the secure web form:
 
-🌐 **Link:** http://localhost:3000/otp/${authState.sessionId}
+🌐 **Link:** ${env.SERVER_URL}/otp/${authState.sessionId}
 
 **Steps:**
 1. 📱 Open the link above in your browser
@@ -531,7 +532,7 @@ async function handleAuthPasswordStep(ctx: Context, userId: number, authState: G
 
     try {
       // Check if password was submitted through web interface
-      const response = await fetch(`http://localhost:3000/api/otp-status/${authState.sessionId}`);
+      const response = await fetch(`/api/otp-status/${authState.sessionId}`);
       if (!response.ok) {
         await ctx.reply('❌ No OTP session found. Please use the web link provided earlier.');
         return;
@@ -569,7 +570,7 @@ async function handleAuthPasswordStep(ctx: Context, userId: number, authState: G
 
 To protect your account, please enter your 2FA password through the secure web form:
 
-🌐 **Link:** http://localhost:3000/otp/${authState.sessionId}
+🌐 **Link:** ${env.SERVER_URL}/otp/${authState.sessionId}
 
 **Steps:**
 1. 🔒 Open the link above in your browser
