@@ -434,8 +434,20 @@ async function handleCallbackQuery(ctx: Context, userId: number, userState: User
         return;
       }
 
-      // Start forwarding process
-      await startForwardingProcess(ctx, userId, userState);
+      // Inform user and start background job without awaiting to avoid webhook timeouts
+      await ctx.reply('🚀 Sending started in background. Progress updates will appear here.');
+      (async () => {
+        try {
+          await startForwardingProcess(ctx, userId, userState);
+        } catch (error) {
+          console.error('Error in background forwarding process:', error);
+          try {
+            await ctx.reply('❌ Background sending encountered an error. Check logs for details.');
+          } catch {}
+        }
+      })();
+
+      return; // Do not block the webhook handler
     } else if (data === 'cancel_send') {
       await ctx.reply('❌ Send operation cancelled.');
       userStates.delete(userId);
@@ -616,8 +628,13 @@ async function sendToUsers(
             } else {
               // Fallback to bot API if gramjs fails
               console.log(`GramJS with cached buffer failed for user ${user.userId}, falling back to bot API`);
-              await ctx.api.copyMessage(user.userId, userState.chatId!, userState.messageId!);
-              return { success: true, userId: user.userId };
+              try {
+                await ctx.api.copyMessage(user.userId, userState.chatId!, userState.messageId!);
+                return { success: true, userId: user.userId };
+              } catch (botErr) {
+                console.error(`Bot API copyMessage failed for user ${user.userId}:`, botErr);
+                return { success: false, userId: user.userId };
+              }
             }
           } else {
             // Fall back to original method if no cached buffer
@@ -626,9 +643,7 @@ async function sendToUsers(
                 adminUserId,
                 user.userId,
                 userState.messageContent,
-                userState.messageType || 'text',
-                userState.mediaData,
-                env.TELEGRAM_BOT_TOKEN
+                userState.messageType || 'text'
               );
               
               if (gramjsSuccess) {
@@ -636,20 +651,35 @@ async function sendToUsers(
               } else {
                 // Fallback to bot API if gramjs fails
                 console.log(`GramJS failed for user ${user.userId}, falling back to bot API`);
-                await ctx.api.copyMessage(user.userId, userState.chatId!, userState.messageId!);
-                return { success: true, userId: user.userId };
+                try {
+                  await ctx.api.copyMessage(user.userId, userState.chatId!, userState.messageId!);
+                  return { success: true, userId: user.userId };
+                } catch (botErr) {
+                  console.error(`Bot API copyMessage failed for user ${user.userId}:`, botErr);
+                  return { success: false, userId: user.userId };
+                }
               }
             } else {
               // No message content available, use bot API
               console.log(`No message content for GramJS, using bot API for user ${user.userId}`);
-              await ctx.api.copyMessage(user.userId, userState.chatId!, userState.messageId!);
-              return { success: true, userId: user.userId };
+              try {
+                await ctx.api.copyMessage(user.userId, userState.chatId!, userState.messageId!);
+                return { success: true, userId: user.userId };
+              } catch (botErr) {
+                console.error(`Bot API copyMessage failed for user ${user.userId}:`, botErr);
+                return { success: false, userId: user.userId };
+              }
             }
           }
         } else {
           // Use bot API
-          await ctx.api.copyMessage(user.userId, userState.chatId!, userState.messageId!);
-          return { success: true, userId: user.userId };
+          try {
+            await ctx.api.copyMessage(user.userId, userState.chatId!, userState.messageId!);
+            return { success: true, userId: user.userId };
+          } catch (botErr) {
+            console.error(`Bot API copyMessage failed for user ${user.userId}:`, botErr);
+            return { success: false, userId: user.userId };
+          }
         }
       } catch (error) {
         console.error(`Failed to send to user ${user.userId} (${attemptType}):`, error);
@@ -657,8 +687,10 @@ async function sendToUsers(
       }
     });
 
-    // Wait for batch to complete
-    const batchResults = await Promise.all(batchPromises);
+    // Wait for batch to complete without letting one rejection crash all
+    const batchResults = await Promise.allSettled(batchPromises).then(results =>
+      results.map(r => (r.status === 'fulfilled' ? r.value : { success: false, userId: (r as any).reason?.userId || 'unknown' }))
+    );
 
     // Count successes and failures
     batchResults.forEach((result) => {

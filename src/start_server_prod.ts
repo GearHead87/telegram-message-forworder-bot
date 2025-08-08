@@ -15,12 +15,12 @@ const SERVER_URL = process.env.SERVER_URL || `http://localhost:${PORT}`;
 process.on('uncaughtException', (error) => {
   console.error('💥 Uncaught Exception:', error);
   console.error('Stack:', error.stack);
-  process.exit(1);
+  // Do not exit immediately; attempt to keep server running
 });
 
 process.on('unhandledRejection', (reason, promise) => {
   console.error('💥 Unhandled Rejection at:', promise, 'reason:', reason);
-  process.exit(1);
+  // Do not exit; log and continue to keep bot alive
 });
 
 // Export variables for module usage

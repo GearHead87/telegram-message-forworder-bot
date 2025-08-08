@@ -35,7 +35,8 @@
 		"input": "^1.0.1",
 		"mongoose": "^8.11.0",
 		"telegram": "^2.26.22",
-		"zod": "^4.0.14"
+		"zod": "^4.0.14",
+		"big-integer": "^1.6.52"
 	},
 	"devDependencies": {
 		"@types/express": "^5.0.0",
