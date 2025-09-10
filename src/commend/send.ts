@@ -79,18 +79,37 @@ async function downloadFileBufferOnce(userState: UserState): Promise<void> {
     try {
       console.log(`📥 Downloading file buffer once for reuse: ${userState.mediaData.fileId}`);
       
-      const fileBuffer = await downloadFileFromTelegram(
-        userState.mediaData.fileId,
-        env.TELEGRAM_BOT_TOKEN,
-        userState.mediaData.mimeType,
-        userState.mediaData.fileName
-      );
-      
-      if (fileBuffer) {
-        userState.fileBuffer = fileBuffer;
-        console.log(`✅ File buffer downloaded and cached (${fileBuffer.length} bytes)`);
-      } else {
-        console.log(`❌ Failed to download file buffer for ${userState.mediaData.fileId}`);
+      // Keep retrying until we successfully download the file
+      const retryDelaysMs = [15000, 20000, 25000, 30000, 35000]; // 15s, 20s alternating
+      let attemptNumber = 0;
+
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        try {
+          const fileBuffer = await downloadFileFromTelegram(
+            userState.mediaData.fileId,
+            env.TELEGRAM_BOT_TOKEN,
+            userState.mediaData.mimeType,
+            userState.mediaData.fileName
+          );
+
+          if (fileBuffer) {
+            userState.fileBuffer = fileBuffer;
+            console.log(`✅ File buffer downloaded and cached (${fileBuffer.length} bytes)`);
+            break;
+          }
+
+          const waitMs = retryDelaysMs[attemptNumber % retryDelaysMs.length];
+          attemptNumber += 1;
+          console.warn(`❌ Failed to download file buffer for ${userState.mediaData.fileId}. Retrying in ${Math.round(waitMs / 1000)}s (attempt #${attemptNumber})...`);
+          await sleep(waitMs);
+        } catch (innerErr) {
+          const waitMs = retryDelaysMs[attemptNumber % retryDelaysMs.length];
+          attemptNumber += 1;
+          console.error(`Error downloading file buffer (attempt #${attemptNumber}):`, innerErr);
+          console.warn(`⏳ Waiting ${Math.round(waitMs / 1000)}s before retrying...`);
+          await sleep(waitMs);
+        }
       }
     } catch (error) {
       console.error('Error downloading file buffer:', error);
