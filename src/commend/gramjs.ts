@@ -746,6 +746,21 @@ export async function handleGramjsResetCommand(ctx: Context) {
 
 const CB_PREFIX_SELECT_DIALOG = 'agm_select_';
 
+function truncateForButton(text: string, maxCodePoints: number = 28): string {
+  try {
+    const cleaned = (text || '')
+      .replace(/[\u0000-\u001F\u007F]/g, '') // remove control chars
+      .trim();
+    const cps = Array.from(cleaned);
+    if (cps.length === 0) return 'Untitled';
+    if (cps.length <= maxCodePoints) return cps.join('');
+    const head = cps.slice(0, Math.max(1, maxCodePoints - 1)).join('');
+    return head + '…';
+  } catch {
+    return 'Untitled';
+  }
+}
+
 // List available groups/channels via inline buttons
 export async function handleAddGroupMemberCommand(ctx: Context) {
   const userId = ctx.from?.id?.toString();
@@ -796,7 +811,7 @@ export async function handleAddGroupMemberCommand(ctx: Context) {
     let col = 0;
     for (const g of toShow) {
       const data = CB_PREFIX_SELECT_DIALOG + g.id;
-      const label = g.title.length > 28 ? g.title.slice(0, 25) + '...' : g.title;
+      const label = truncateForButton(g.title, 28);
       kb.text(label, data);
       col += 1;
       if (col % 2 === 0) kb.row();
