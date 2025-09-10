@@ -16,7 +16,9 @@ import {
   handleGramjsAuthenticateCommand,
   handleGramjsTestCommand,
   handleGramjsStatusCommand,
-  handleGramjsResetCommand
+  handleGramjsResetCommand,
+  handleAddGroupMemberCommand,
+  handleAddGroupMemberCallback
 } from './commend/gramjs.js';
 
 // Production-ready bot initialization with error handling
@@ -94,6 +96,10 @@ try {
   bot.command('gramjs_status', requireAdmin, handleGramjsStatusCommand);
   bot.command('gramjs_reset', requireAdmin, handleGramjsResetCommand);
 
+  // Handle add-group-member command (admin only)
+  bot.command('add_group_member', requireAdmin, handleAddGroupMemberCommand);
+  bot.command('add-group-member', requireAdmin, handleAddGroupMemberCommand);
+
   // Handle all other messages (for send flow and gramjs setup flow)
   bot.on('message', async (ctx, next) => {
     // First try gramjs setup flow
@@ -105,7 +111,13 @@ try {
   });
 
   // Handle callback queries (for inline keyboard buttons)
-  bot.on('callback_query', handleSendFlow);
+  bot.on('callback_query', async (ctx, next) => {
+    // First try our add-group-member callbacks
+    await handleAddGroupMemberCallback(ctx);
+    // Then allow existing send flow callbacks
+    await handleSendFlow(ctx);
+    await next();
+  });
 
   // Handle unknown commands
   bot.on('message:text', async (ctx, next) => {
@@ -141,6 +153,7 @@ async function initializeBot(): Promise<void> {
       { command: 'start', description: 'Start the bot' },
       { command: 'help', description: 'Show help information' },
       { command: 'send', description: '[Admin] Send message to all users' },
+      { command: 'add_group_member', description: '[Admin] List groups and export members' },
       // admin Related Commands
       { command: 'addadmin', description: '[Admin] Add a new admin' },
       { command: 'removeadmin', description: '[Admin] Remove admin access' },

@@ -1,9 +1,12 @@
-import { Context } from 'grammy';
-import { TelegramClient } from 'telegram';
+import { Context, InlineKeyboard } from 'grammy';
+import { TelegramClient, Api } from 'telegram';
 import { StringSession } from 'telegram/sessions/index.js';
 import { AdminUser } from '../database/models/AdminUser.js';
 import { testGramjsConnection } from '../utils/gramjsClient.js';
 import {env} from "../env.js"
+import { isAdmin } from '../middleware/adminAuth.js';
+import { exportGroupMembers, GroupMemberRecord } from '../services/memberExportStorage.js';
+import bigInt from 'big-integer';
 
 // Use configured SERVER_URL or fall back to localhost with PORT
 const SERVER_BASE_URL = env.SERVER_URL ?? `http://localhost:${env.PORT}`;
@@ -734,5 +737,184 @@ export async function handleGramjsResetCommand(ctx: Context) {
   } catch (error) {
     console.error('Error in gramjs reset command:', error);
     await ctx.reply('❌ An error occurred while resetting GramJS configuration.');
+  }
+}
+
+// =========================
+// /add-group-member feature
+// =========================
+
+const CB_PREFIX_SELECT_DIALOG = 'agm_select_';
+
+// List available groups/channels via inline buttons
+export async function handleAddGroupMemberCommand(ctx: Context) {
+  const userId = ctx.from?.id?.toString();
+  if (!userId) return;
+
+  // Only admins
+  const allowed = await isAdmin(userId);
+  if (!allowed) {
+    await ctx.reply('❌ You are not authorized to use this command.');
+    return;
+  }
+
+  try {
+    const client = await (await import('../utils/gramjsClient.js')).getGramjsClient(userId);
+    if (!client) {
+      await ctx.reply('❌ GramJS is not configured. Run /gramjs_setup and authenticate first.');
+      return;
+    }
+    if (!client.connected) {
+      try { await client.connect(); } catch {}
+    }
+
+    await ctx.reply('🔎 Fetching your groups...');
+
+    const dialogs = await client.invoke(new Api.messages.GetDialogs({ offsetPeer: new Api.InputPeerSelf(), limit: 200 }));
+    const chats = (dialogs as any).chats as Api.TypeChat[];
+
+    const groups: { id: string; title: string }[] = [];
+    for (const chat of chats) {
+      if (chat instanceof Api.Channel) {
+        // Prefer megagroups (supergroups). Include channels as well if needed.
+        const title = (chat as any).title || (chat as any).username || 'Unnamed';
+        groups.push({ id: String(chat.id), title });
+      } else if (chat instanceof Api.Chat) {
+        const title = (chat as any).title || 'Group';
+        groups.push({ id: String(chat.id), title });
+      }
+    }
+
+    if (groups.length === 0) {
+      await ctx.reply('📭 No groups found in your account.');
+      return;
+    }
+
+    const kb = new InlineKeyboard();
+    const maxButtons = 20;
+    const toShow = groups.slice(0, maxButtons);
+    let col = 0;
+    for (const g of toShow) {
+      const data = CB_PREFIX_SELECT_DIALOG + g.id;
+      const label = g.title.length > 28 ? g.title.slice(0, 25) + '...' : g.title;
+      kb.text(label, data);
+      col += 1;
+      if (col % 2 === 0) kb.row();
+    }
+
+    await ctx.reply('👥 Select a group/channel to export members:', { reply_markup: kb });
+  } catch (error) {
+    console.error('Error handling /add-group-member:', error);
+    await ctx.reply('❌ Failed to fetch groups. Please try again later.');
+  }
+}
+
+// Handle callback: export selected group's members
+export async function handleAddGroupMemberCallback(ctx: Context) {
+  const userId = ctx.from?.id?.toString();
+  const data = ctx.callbackQuery?.data;
+  if (!userId || !data) return;
+
+  if (!data.startsWith(CB_PREFIX_SELECT_DIALOG)) return; // Not ours
+
+  const allowed = await isAdmin(userId);
+  if (!allowed) return;
+
+  const dialogId = data.slice(CB_PREFIX_SELECT_DIALOG.length);
+  await ctx.answerCallbackQuery();
+
+  try {
+    const client = await (await import('../utils/gramjsClient.js')).getGramjsClient(userId);
+    if (!client) {
+      await ctx.reply('❌ GramJS is not configured. Run /gramjs_setup and authenticate first.');
+      return;
+    }
+    if (!client.connected) {
+      try { await client.connect(); } catch {}
+    }
+
+    // Resolve input entity from dialogs to get correct accessHash for channels
+    const dialogs = await client.invoke(new Api.messages.GetDialogs({ offsetPeer: new Api.InputPeerSelf(), limit: 200 }));
+    const chats = (dialogs as any).chats as Api.TypeChat[];
+    let inputEntity: Api.TypeInputPeer | null = null;
+    let groupName = 'Selected chat';
+    for (const chat of chats) {
+      if ((chat as any).id && String((chat as any).id) === dialogId) {
+        if (chat instanceof Api.Channel) {
+          inputEntity = new Api.InputPeerChannel({ channelId: chat.id, accessHash: chat.accessHash! });
+          groupName = chat.title;
+        } else if (chat instanceof Api.Chat) {
+          inputEntity = new Api.InputPeerChat({ chatId: chat.id });
+          groupName = chat.title;
+        }
+        break;
+      }
+    }
+
+    if (!inputEntity) {
+      await ctx.reply('❌ Failed to resolve the selected chat.');
+      return;
+    }
+
+    const members: GroupMemberRecord[] = [];
+
+    // For channels/supergroups, use channels.GetParticipants; for basic chats, use messages.GetFullChat
+    if (inputEntity instanceof Api.InputPeerChannel) {
+      let offset = 0;
+      const limit = 200;
+      while (true) {
+        const res = await client.invoke(new Api.channels.GetParticipants({
+          channel: inputEntity,
+          filter: new Api.ChannelParticipantsRecent(),
+          offset,
+          limit,
+          hash: bigInt.zero as any,
+        }));
+        const users = (res as any).users as Api.User[];
+        if (users && users.length > 0) {
+          for (const u of users) {
+            if (!(u instanceof Api.User)) continue;
+            members.push({
+              userId: String(u.id),
+              username: u.username || undefined,
+              firstName: u.firstName || undefined,
+              lastName: u.lastName || undefined,
+            });
+          }
+        }
+        const count = users?.length || 0;
+        offset += count;
+        if (count < limit) break;
+      }
+    } else if (inputEntity instanceof Api.InputPeerChat) {
+      // messages.GetFullChat expects int (number) for small chat IDs in MTProto schema; keep as-is
+      const res = await client.invoke(new Api.messages.GetFullChat({ chatId: (inputEntity as Api.InputPeerChat).chatId as any }));
+      const users = (res as any).users as Api.User[];
+      if (users) {
+        for (const u of users) {
+          if (!(u instanceof Api.User)) continue;
+          members.push({
+            userId: String(u.id),
+            username: u.username || undefined,
+            firstName: u.firstName || undefined,
+            lastName: u.lastName || undefined,
+          });
+        }
+      }
+    }
+
+    await ctx.reply(`👤 Total members found: ${members.length}`);
+
+    const saved = await exportGroupMembers({
+      adminUserId: userId,
+      groupId: dialogId,
+      groupName,
+      members,
+    });
+
+    await ctx.reply(`💾 Members exported. Location: ${saved.location}`);
+  } catch (error) {
+    console.error('Error exporting group members:', error);
+    await ctx.reply('❌ Failed to export members.');
   }
 }
