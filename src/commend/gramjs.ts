@@ -745,6 +745,8 @@ export async function handleGramjsResetCommand(ctx: Context) {
 // =========================
 
 const CB_PREFIX_SELECT_DIALOG = 'agm_select_';
+const CB_PREFIX_PAGE = 'agm_page_';
+const GROUPS_PAGE_SIZE = 20;
 
 function truncateForButton(text: string, maxCodePoints: number = 28): string {
   try {
@@ -759,6 +761,44 @@ function truncateForButton(text: string, maxCodePoints: number = 28): string {
   } catch {
     return 'Untitled';
   }
+}
+
+function buildGroupsKeyboard(
+  groups: { id: string; title: string }[],
+  page: number,
+  pageSize: number
+): { keyboard: InlineKeyboard; totalPages: number } {
+  const totalPages = Math.max(1, Math.ceil(groups.length / pageSize));
+  const currentPage = Math.min(Math.max(1, page), totalPages);
+  const start = (currentPage - 1) * pageSize;
+  const end = Math.min(groups.length, start + pageSize);
+  const slice = groups.slice(start, end);
+
+  const kb = new InlineKeyboard();
+  let col = 0;
+  for (const g of slice) {
+    const data = CB_PREFIX_SELECT_DIALOG + g.id;
+    const label = truncateForButton(g.title, 28);
+    kb.text(label, data);
+    col += 1;
+    if (col % 2 === 0) kb.row();
+  }
+
+  // Pagination row
+  kb.row();
+  if (currentPage > 1) {
+    kb.text('⬅️ Previous', CB_PREFIX_PAGE + String(currentPage - 1));
+  }
+  if (currentPage < totalPages) {
+    if (currentPage > 1) {
+      kb.text('Next ➡️', CB_PREFIX_PAGE + String(currentPage + 1));
+    } else {
+      // keep alignment, still place only Next if no Prev
+      kb.text('Next ➡️', CB_PREFIX_PAGE + String(currentPage + 1));
+    }
+  }
+
+  return { keyboard: kb, totalPages };
 }
 
 // List available groups/channels via inline buttons
@@ -805,19 +845,13 @@ export async function handleAddGroupMemberCommand(ctx: Context) {
       return;
     }
 
-    const kb = new InlineKeyboard();
-    const maxButtons = 20;
-    const toShow = groups.slice(0, maxButtons);
-    let col = 0;
-    for (const g of toShow) {
-      const data = CB_PREFIX_SELECT_DIALOG + g.id;
-      const label = truncateForButton(g.title, 28);
-      kb.text(label, data);
-      col += 1;
-      if (col % 2 === 0) kb.row();
-    }
-
-    await ctx.reply('👥 Select a group/channel to export members:', { reply_markup: kb });
+    const { keyboard, totalPages } = buildGroupsKeyboard(groups, 1, GROUPS_PAGE_SIZE);
+    await ctx.reply(
+      totalPages > 1
+        ? `👥 Select a group/channel to export members (Page 1/${totalPages}):`
+        : '👥 Select a group/channel to export members:',
+      { reply_markup: keyboard }
+    );
   } catch (error) {
     console.error('Error handling /add-group-member:', error);
     await ctx.reply('❌ Failed to fetch groups. Please try again later.');
@@ -829,6 +863,51 @@ export async function handleAddGroupMemberCallback(ctx: Context) {
   const userId = ctx.from?.id?.toString();
   const data = ctx.callbackQuery?.data;
   if (!userId || !data) return;
+
+  // Pagination handling
+  if (data.startsWith(CB_PREFIX_PAGE)) {
+    const pageStr = data.slice(CB_PREFIX_PAGE.length);
+    const requestedPage = parseInt(pageStr, 10) || 1;
+    await ctx.answerCallbackQuery();
+
+    try {
+      const client = await (await import('../utils/gramjsClient.js')).getGramjsClient(userId);
+      if (!client) return;
+      if (!client.connected) { try { await client.connect(); } catch {} }
+
+      const dialogs = await client.invoke(new Api.messages.GetDialogs({ offsetPeer: new Api.InputPeerSelf(), limit: 200 }));
+      const chats = (dialogs as any).chats as Api.TypeChat[];
+      const groups: { id: string; title: string }[] = [];
+      for (const chat of chats) {
+        if (chat instanceof Api.Channel) {
+          const title = (chat as any).title || (chat as any).username || 'Unnamed';
+          groups.push({ id: String(chat.id), title });
+        } else if (chat instanceof Api.Chat) {
+          const title = (chat as any).title || 'Group';
+          groups.push({ id: String(chat.id), title });
+        }
+      }
+
+      const { keyboard, totalPages } = buildGroupsKeyboard(groups, requestedPage, GROUPS_PAGE_SIZE);
+
+      const chatId = ctx.chat?.id;
+      const messageId = ctx.callbackQuery?.message?.message_id;
+      if (!chatId || !messageId) {
+        // If we can't edit, just acknowledge and return
+        await ctx.answerCallbackQuery();
+        return;
+      }
+      const text = totalPages > 1
+        ? `👥 Select a group/channel to export members (Page ${Math.min(Math.max(1, requestedPage), Math.max(1, totalPages))}/${totalPages}):`
+        : '👥 Select a group/channel to export members:';
+
+      // Edit the original message
+      await ctx.api.editMessageText(chatId, messageId, text, { reply_markup: keyboard });
+    } catch (err) {
+      console.error('Error handling pagination:', err);
+    }
+    return;
+  }
 
   if (!data.startsWith(CB_PREFIX_SELECT_DIALOG)) return; // Not ours
 
