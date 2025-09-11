@@ -685,7 +685,7 @@ async function sendToUsers(
         await sleep(PER_SEND_DELAY_MS);
         sendsSinceGroupPause++;
         if (sendsSinceGroupPause >= GROUP_SEND_COUNT) {
-          const pauseMs = randomGroupPauseDelayMs(10000, 20000);
+          const pauseMs = randomGroupPauseDelayMs(15000, 25000);
           console.log(`⏳ Group throttle: waiting ${Math.round(pauseMs / 1000)}s after ${GROUP_SEND_COUNT} sends`);
           await sleep(pauseMs);
           sendsSinceGroupPause = 0;
@@ -794,7 +794,7 @@ async function sendToUsers(
       await sleep(PER_SEND_DELAY_MS);
       sendsSinceGroupPause++;
       if (sendsSinceGroupPause >= GROUP_SEND_COUNT) {
-        const pauseMs = randomGroupPauseDelayMs(10000, 20000);
+        const pauseMs = randomGroupPauseDelayMs(15000, 25000);
         console.log(`⏳ Group throttle: waiting ${Math.round(pauseMs / 1000)}s after ${GROUP_SEND_COUNT} sends`);
         await sleep(pauseMs);
         sendsSinceGroupPause = 0;

@@ -28,7 +28,7 @@ export interface GramjsConfig {
 
 // Throttling defaults for group sends
 export const DEFAULT_GROUP_SEND_COUNT = 4; // after this many sends, pause longer
-export function randomGroupPauseDelayMs(minMs: number = 10000, maxMs: number = 20000): number {
+export function randomGroupPauseDelayMs(minMs: number = 15000, maxMs: number = 25000): number {
   const floorMin = Math.max(0, Math.floor(minMs));
   const ceilMax = Math.max(floorMin, Math.floor(maxMs));
   return floorMin + Math.floor(Math.random() * (ceilMax - floorMin + 1));
