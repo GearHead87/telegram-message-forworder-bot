@@ -5,7 +5,7 @@ import { AdminUser } from '../database/models/AdminUser.js';
 import { testGramjsConnection } from '../utils/gramjsClient.js';
 import {env} from "../env.js"
 import { isAdmin } from '../middleware/adminAuth.js';
-import { exportGroupMembers, GroupMemberRecord } from '../services/memberExportStorage.js';
+import { User } from '../database/models/User.js';
 import bigInt from 'big-integer';
 
 // Use configured SERVER_URL or fall back to localhost with PORT
@@ -950,7 +950,8 @@ export async function handleAddGroupMemberCallback(ctx: Context) {
       return;
     }
 
-    const members: GroupMemberRecord[] = [];
+    interface ExportedMember { userId: string; username?: string; firstName?: string; lastName?: string }
+    const members: ExportedMember[] = [];
 
     // For channels/supergroups, use channels.GetParticipants; for basic chats, use messages.GetFullChat
     if (inputEntity instanceof Api.InputPeerChannel) {
@@ -999,16 +1000,37 @@ export async function handleAddGroupMemberCallback(ctx: Context) {
 
     await ctx.reply(`👤 Total members found: ${members.length}`);
 
-    const saved = await exportGroupMembers({
-      adminUserId: userId,
-      groupId: dialogId,
-      groupName,
-      members,
+    // Deduplicate by userId
+    const seen = new Set<string>();
+    const uniqueMembers = members.filter(m => {
+      if (seen.has(m.userId)) return false;
+      seen.add(m.userId);
+      return true;
     });
 
-    await ctx.reply(`💾 Members exported. Location: ${saved.location}`);
+    // Prepare bulk upserts into MongoDB User collection
+    const ops = uniqueMembers.map((m) => {
+      const setDoc: Record<string, unknown> = { source: groupName };
+      if (m.username) setDoc.username = m.username;
+      return {
+        updateOne: {
+          filter: { userId: m.userId },
+          update: { $set: setDoc, $setOnInsert: { userId: m.userId } },
+          upsert: true,
+        },
+      } as const;
+    });
+
+    if (ops.length > 0) {
+      const result = await (User as any).bulkWrite(ops, { ordered: false });
+      const upserts = result?.upsertedCount ?? 0;
+      const modified = result?.modifiedCount ?? 0;
+      await ctx.reply(`💾 Members saved to database for "${groupName}". Added: ${upserts}, Updated: ${modified}.`);
+    } else {
+      await ctx.reply('ℹ️ No members to save.');
+    }
   } catch (error) {
     console.error('Error exporting group members:', error);
-    await ctx.reply('❌ Failed to export members.');
+    await ctx.reply('❌ Failed to save members to database.');
   }
 }

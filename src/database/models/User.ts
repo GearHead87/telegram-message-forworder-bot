@@ -9,6 +9,15 @@ const userSchema = new mongoose.Schema(
       required: true,
       unique: true,
     },
+    username: {
+      type: String,
+      required: false,
+    },
+    source: {
+      type: String,
+      required: false,
+
+    },
   },
   {
     // Specify the collection name explicitly
