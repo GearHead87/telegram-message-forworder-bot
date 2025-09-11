@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import { env } from '../../env.js';
+import { userCollectionName } from '../../constant.js';
 
 // Define the user schema
 const userSchema = new mongoose.Schema(
@@ -21,7 +21,7 @@ const userSchema = new mongoose.Schema(
   },
   {
     // Specify the collection name explicitly
-    collection: env.USER_COLLECTION_NAME,
+    collection: userCollectionName,
   },
 );
 
