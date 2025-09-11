@@ -83,7 +83,6 @@ async function downloadFileBufferOnce(userState: UserState): Promise<void> {
       const retryDelaysMs = [15000, 20000, 25000, 30000, 35000]; // 15s, 20s alternating
       let attemptNumber = 0;
 
-      // eslint-disable-next-line no-constant-condition
       while (true) {
         try {
           const fileBuffer = await downloadFileFromTelegram(
@@ -517,8 +516,8 @@ async function startForwardingProcess(ctx: Context, userId: number, userState: U
   if (!userState.messageId || !userState.chatId) return;
 
   try {
-    // Get all users from database
-    const users = await User.find();
+    // Get all users from database (only required fields), as plain objects
+    const users = (await User.find().select('userId username').lean()) as Array<{ userId: string; username?: string | null }>;
     const totalUsers = users.length;
 
     if (totalUsers === 0) {
@@ -574,9 +573,9 @@ async function startForwardingProcess(ctx: Context, userId: number, userState: U
     for (let retryAttempt = 1; retryAttempt <= maxRetries && failedUsers.length > 0; retryAttempt++) {
       await new Promise(resolve => setTimeout(resolve, 2000)); // 2 second delay before retry
 
-      // Get users to retry
+      // Get users to retry (when using GramJS, only retry users with username)
       const usersToRetry = users.filter(user => 
-        failedUsers.some(failed => failed.userId === user.userId)
+        failedUsers.some(failed => failed.userId === user.userId) && (!useGramjs || !!user.username)
       );
 
       if (usersToRetry.length === 0) break;
@@ -645,7 +644,7 @@ async function startForwardingProcess(ctx: Context, userId: number, userState: U
 // Helper function to send messages to users
 async function sendToUsers(
   ctx: Context, 
-  users: { userId: string }[], 
+  users: { userId: string; username?: string | null }[], 
   userState: UserState, 
   batchSize: number, 
   delayBetweenBatches: number,
@@ -678,12 +677,30 @@ async function sendToUsers(
     const batchResults: { success: boolean; userId: string }[] = [];
     let sendsSinceGroupPause = 0;
     for (const user of batch) {
+      // When using GramJS, require a username; skip users without it
+      if (useGramjs && !user.username) {
+        console.log(`Skipping user ${user.userId} due to missing username for GramJS send.`);
+        batchResults.push({ success: false, userId: user.userId });
+        // Keep pacing consistent
+        await sleep(PER_SEND_DELAY_MS);
+        sendsSinceGroupPause++;
+        if (sendsSinceGroupPause >= GROUP_SEND_COUNT) {
+          await sleep(GROUP_DELAY_MS);
+          sendsSinceGroupPause = 0;
+        }
+        continue;
+      }
       let success = false;
       try {
         if (useGramjs && adminUserId) {
           if (userState.fileBuffer) {
             if (gramClient) await ensureClientConnected(gramClient);
-            const gramjsSuccess = await sendMessageWithCachedBuffer(adminUserId, user.userId, userState, gramClient);
+            const gramjsSuccess = await sendMessageWithCachedBuffer(
+              adminUserId,
+              user.username as string,
+              userState,
+              gramClient
+            );
             success = gramjsSuccess;
             if (!gramjsSuccess) {
               console.log(`GramJS with cached buffer failed for user ${user.userId}, falling back to bot API`);
@@ -703,7 +720,7 @@ async function sendToUsers(
             if (gramClient) await ensureClientConnected(gramClient);
             const gramjsSuccess = await sendMessageContentViaGramjs(
               adminUserId,
-              user.userId,
+              user.username as string,
               userState.messageContent,
               userState.messageType || 'text'
             );
