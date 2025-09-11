@@ -26,6 +26,25 @@ export interface GramjsConfig {
   sessionString?: string;
 }
 
+// Throttling defaults for group sends
+export const DEFAULT_GROUP_SEND_COUNT = 4; // after this many sends, pause longer
+export function randomGroupPauseDelayMs(minMs: number = 10000, maxMs: number = 20000): number {
+  const floorMin = Math.max(0, Math.floor(minMs));
+  const ceilMax = Math.max(floorMin, Math.floor(maxMs));
+  return floorMin + Math.floor(Math.random() * (ceilMax - floorMin + 1));
+}
+
+// Utility to detect PEER_FLOOD errors from GramJS/MTProto
+export function isPeerFloodError(error: unknown): boolean {
+  try {
+    const msg = typeof error === 'string' ? error : (error as any)?.message || (error as any)?.errorMessage || '';
+    if (!msg) return false;
+    return /PEER_FLOOD/i.test(msg);
+  } catch {
+    return false;
+  }
+}
+
 // Create or get existing gramjs client for an admin user
 export async function getGramjsClient(adminUserId: string): Promise<TelegramClient | null> {
   try {
@@ -461,6 +480,10 @@ export async function sendMessageContentViaGramjs(
     return true;
 
   } catch (error) {
+    if (isPeerFloodError(error)) {
+      console.error(`❌ PEER_FLOOD detected while sending via gramjs from admin ${adminUserId}. Disabling GramJS for this run.`, error);
+      throw error;
+    }
     console.error(`❌ Failed to send ${messageType} message via gramjs from admin ${adminUserId}:`, error);
     return false;
   }

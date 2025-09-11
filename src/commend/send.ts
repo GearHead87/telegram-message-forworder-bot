@@ -2,7 +2,7 @@ import { Context } from 'grammy';
 import { InlineKeyboard } from 'grammy';
 import { User } from '../database/models/User.js';
 import { AdminUser } from '../database/models/AdminUser.js';
-import { sendMessageContentViaGramjs, downloadFileFromTelegram, getGramjsClient } from '../utils/gramjsClient.js';
+import { sendMessageContentViaGramjs, downloadFileFromTelegram, getGramjsClient, randomGroupPauseDelayMs } from '../utils/gramjsClient.js';
 import { env } from '../env.js';
 import { Api } from 'telegram';
 import { CustomFile } from 'telegram/client/uploads.js';
@@ -39,8 +39,8 @@ interface FailedUser {
 
 // Rate limit configuration
 const PER_SEND_DELAY_MS = 300; // wait after each send
-const GROUP_SEND_COUNT = 10;   // after this many sends, pause longer
-const GROUP_DELAY_MS = 3000;   // long pause duration
+const GROUP_SEND_COUNT = 3;    // after this many sends, pause longer
+// GROUP_DELAY_MS will be randomized 10-20s via randomGroupPauseDelayMs()
 
 // Map to store user states (supports multiple concurrent users)
 const userStates = new Map<number, UserState>();
@@ -685,7 +685,9 @@ async function sendToUsers(
         await sleep(PER_SEND_DELAY_MS);
         sendsSinceGroupPause++;
         if (sendsSinceGroupPause >= GROUP_SEND_COUNT) {
-          await sleep(GROUP_DELAY_MS);
+          const pauseMs = randomGroupPauseDelayMs(10000, 20000);
+          console.log(`⏳ Group throttle: waiting ${Math.round(pauseMs / 1000)}s after ${GROUP_SEND_COUNT} sends`);
+          await sleep(pauseMs);
           sendsSinceGroupPause = 0;
         }
         continue;
@@ -695,14 +697,20 @@ async function sendToUsers(
         if (useGramjs && adminUserId) {
           if (userState.fileBuffer) {
             if (gramClient) await ensureClientConnected(gramClient);
-            const gramjsSuccess = await sendMessageWithCachedBuffer(
-              adminUserId,
-              user.username as string,
-              userState,
-              gramClient
-            );
-            success = gramjsSuccess;
-            if (!gramjsSuccess) {
+            try {
+              const gramjsSuccess = await sendMessageWithCachedBuffer(
+                adminUserId,
+                user.username as string,
+                userState,
+                gramClient
+              );
+              success = gramjsSuccess;
+            } catch (e) {
+              // PEER_FLOOD or hard GramJS error; disable GramJS path for remainder of run
+              console.error('GramJS hard error (possibly PEER_FLOOD). Falling back to Bot API for this user.', e);
+              success = false;
+            }
+            if (!success) {
               console.log(`GramJS with cached buffer failed for user ${user.userId}, falling back to bot API`);
               try {
                 await ctx.api.copyMessage(user.userId, userState.chatId!, userState.messageId!);
@@ -718,14 +726,19 @@ async function sendToUsers(
             }
           } else if (userState.messageContent) {
             if (gramClient) await ensureClientConnected(gramClient);
-            const gramjsSuccess = await sendMessageContentViaGramjs(
-              adminUserId,
-              user.username as string,
-              userState.messageContent,
-              userState.messageType || 'text'
-            );
-            success = gramjsSuccess;
-            if (!gramjsSuccess) {
+            try {
+              const gramjsSuccess = await sendMessageContentViaGramjs(
+                adminUserId,
+                user.username as string,
+                userState.messageContent,
+                userState.messageType || 'text'
+              );
+              success = gramjsSuccess;
+            } catch (e) {
+              console.error('GramJS hard error (possibly PEER_FLOOD). Falling back to Bot API for this user.', e);
+              success = false;
+            }
+            if (!success) {
               console.log(`GramJS failed for user ${user.userId}, falling back to bot API`);
               try {
                 await ctx.api.copyMessage(user.userId, userState.chatId!, userState.messageId!);
@@ -781,7 +794,9 @@ async function sendToUsers(
       await sleep(PER_SEND_DELAY_MS);
       sendsSinceGroupPause++;
       if (sendsSinceGroupPause >= GROUP_SEND_COUNT) {
-        await sleep(GROUP_DELAY_MS);
+        const pauseMs = randomGroupPauseDelayMs(10000, 20000);
+        console.log(`⏳ Group throttle: waiting ${Math.round(pauseMs / 1000)}s after ${GROUP_SEND_COUNT} sends`);
+        await sleep(pauseMs);
         sendsSinceGroupPause = 0;
       }
     }

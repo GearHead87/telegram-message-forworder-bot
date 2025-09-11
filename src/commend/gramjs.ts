@@ -2,7 +2,7 @@ import { Context, InlineKeyboard } from 'grammy';
 import { TelegramClient, Api } from 'telegram';
 import { StringSession } from 'telegram/sessions/index.js';
 import { AdminUser } from '../database/models/AdminUser.js';
-import { testGramjsConnection } from '../utils/gramjsClient.js';
+import { testGramjsConnection, randomGroupPauseDelayMs } from '../utils/gramjsClient.js';
 import {env} from "../env.js"
 import { isAdmin } from '../middleware/adminAuth.js';
 import { User } from '../database/models/User.js';
@@ -49,6 +49,8 @@ interface GramjsAuthState {
 
 const setupStates = new Map<number, GramjsSetupState>();
 const authStates = new Map<number, GramjsAuthState>();
+
+function sleep(ms: number): Promise<void> { return new Promise(r => setTimeout(r, ms)); }
 
 // Handle /gramjs_setup command - start gramjs setup process
 export async function handleGramjsSetupCommand(ctx: Context) {
@@ -957,6 +959,7 @@ export async function handleAddGroupMemberCallback(ctx: Context) {
     if (inputEntity instanceof Api.InputPeerChannel) {
       let offset = 0;
       const limit = 200;
+      let pageCount = 0;
       while (true) {
         const res = await client.invoke(new Api.channels.GetParticipants({
           channel: inputEntity,
@@ -979,6 +982,15 @@ export async function handleAddGroupMemberCallback(ctx: Context) {
         }
         const count = users?.length || 0;
         offset += count;
+        pageCount += 1;
+        // Small per-page delay to be friendly
+        await sleep(300);
+        // After 4 pages, wait 10-20s randomly to avoid peer flood
+        if (pageCount % 4 === 0) {
+          const pauseMs = randomGroupPauseDelayMs(10000, 20000);
+          console.log(`⏳ Throttle: waiting ${Math.round(pauseMs / 1000)}s after ${pageCount} pages of GetParticipants`);
+          await sleep(pauseMs);
+        }
         if (count < limit) break;
       }
     } else if (inputEntity instanceof Api.InputPeerChat) {
